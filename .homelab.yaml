@@ -1,0 +1,14 @@
+# 이 앱의 자기선언 — homelab 온보딩이 이 파일을 검증해 배포 설정을 생성한다.
+# 계약(전체 필드/규칙): ukyi-app/homelab → tools/homelab-app-schema.json
+kind: api            # api | worker | ssr | spa
+resources:           # 필수 — 원장(메모리 예산) 게이트 대상
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { cpu: 500m, memory: 128Mi }
+route:
+  public: false      # true=<앱>.ukyi.app(공개), false=<앱>.home.ukyi.app(내부). host:로 오버라이드 가능
+db:
+  enabled: false     # true면 migrateCmd가 wave-1 마이그레이션 Job으로 실행됨
+env: []              # 평문 설정만 — 비밀은 secrets:로 선언(값은 homelab KSOPS에서 관리)
+secrets: []          # 예: [my-app-secrets] → 온보딩 PR 체크리스트에 enc 작성 안내가 붙는다
+deploy:
+  autoDeploy: true   # false면 main 머지 후 GitHub environment(production) 승인을 거쳐 배포
