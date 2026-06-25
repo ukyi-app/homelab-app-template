@@ -6,9 +6,6 @@ resources:                 # 필수 — 메모리 예산 원장 게이트 대상
   limits: { cpu: 500m, memory: 128Mi }
 route:
   public: false            # true=<앱>.ukyi.app(공개) / false=<앱>.home.ukyi.app(내부). host:로 오버라이드
-db: []                     # 선프로비전 DB 이름 배열. 예: [orders] — 먼저 ✨ create-database로 생성
-redis: []                  # 선프로비전 캐시 이름 배열. 예: [sessions] — 먼저 ✨ create-cache로 생성
-# migrate: { cmd: ["node", "migrate.js"] }   # db 사용 + 마이그레이션 시 주석 해제(wave-1 Job)
 env: []                    # 평문 설정만 — 비밀은 secrets:로 선언
 secrets: []                # 예: [my-app-secrets] → pnpm secret:seal로 봉인, create-app/update-secrets가 배선
 deploy:
