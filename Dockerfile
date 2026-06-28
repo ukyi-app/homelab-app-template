@@ -1,5 +1,17 @@
 # syntax=docker/dockerfile:1
-# TODO: distroless·non-root·arm64 이미지로 빌드하라.
-# service 계약: :8080 http(/health). metrics.enabled=true일 때만 :9090 /metrics.
-FROM gcr.io/distroless/static-debian12:nonroot
+# homelab service 계약: :8080 HTTP, GET /health.
+
+FROM oven/bun:1 AS builder
+WORKDIR /app
+COPY package.json ./
+COPY src ./src
+RUN bun run build
+
+FROM oven/bun:1-distroless AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    PORT=8080
+COPY --from=builder /app/dist ./dist
+EXPOSE 8080
 USER 65532:65532
+ENTRYPOINT ["bun", "/app/dist/index.js"]

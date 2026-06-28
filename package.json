@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "test": "bun test",
+    "build": "bun build src/index.ts --target bun --minify --sourcemap --outdir dist",
     "secret:seal": "bun tools/seal-secret.mts --config .app-config.yml --env .env"
   }
 }
