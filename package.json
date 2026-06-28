@@ -1,0 +1,8 @@
+{
+  "name": "homelab-app-template",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "secret:seal": "bun tools/seal-secret.mts --config .app-config.yml --env .env"
+  }
+}
