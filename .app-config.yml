@@ -6,5 +6,7 @@ resources:                 # 필수 — 메모리 예산 원장 게이트 대상
   limits: { cpu: 500m, memory: 128Mi }
 route:
   public: false            # true=<앱>.ukyi.app(공개) / false=<앱>.home.ukyi.app(내부). host:로 오버라이드
+# metrics:
+#   enabled: true          # /metrics를 9090 포트에 구현한 service만 켠다(기본 false)
 deploy:
   autoDeploy: true         # false면 .bindings.json autoDeploy=false → bump 승인 PR
