@@ -2,10 +2,20 @@
 
 ## 시작
 1. 이 템플릿으로 레포 생성 (레포 이름 = 앱 이름, 소문자/숫자/하이픈)
-2. `.app-config.yml` 수정 (kind/resources/route)
-3. `src/` + `Dockerfile` 구현 — service 계약: `:8080` HTTP, `GET /health`; metrics는 `.app-config.yml`에서 opt-in한 경우에만 `:9090/metrics`; DB 사용 시 앱이 부팅 시 self-migrate(expand/contract+멱등, 별도 migrate Job 없음)
-4. main에 push → 이미지 빌드·GHCR push (자동 배포 아님). 첫 온보딩은 **owner가 homelab에서 실행** → 생성 PR 머지 = 첫 배포 🚀
+2. 만들 앱 종류에 맞춰 scaffold 실행
+3. `.app-config.yml` 수정 (kind/resources/route)
+4. main에 push → 이미지 빌드·GHCR push (자동 배포 아님). 첫 온보딩은 **owner가 homelab에서 실행** → 생성 PR 머지 = 첫 배포
 5. 이후 main 머지마다 자동 배포 (homelab GHCR 폴링이 감지 → autoDeploy면 자동 PR·머지)
+
+```sh
+pnpm scaffold --kind service
+pnpm scaffold --kind static
+pnpm scaffold --kind worker
+pnpm install
+```
+
+`scaffold`는 kind에 맞는 `Dockerfile`과 앱 소스만 생성한다. 이미 같은 파일이 있으면 중단하며,
+덮어쓰려면 `--force`를 붙인다.
 
 ## 수동 승인 게이트 (선택)
 `.app-config.yml`의 `deploy.autoDeploy: false`로 두면, homelab GHCR 폴링이 새 이미지를
@@ -29,5 +39,5 @@ pnpm secret:seal
 | kind | 앱이 준비할 것 |
 |---|---|
 | `service` | `:8080`에서 HTTP 요청을 받고 `GET /health`가 200을 반환해야 한다. `/metrics`는 기본 불필요하며, `metrics.enabled: true`일 때만 `:9090/metrics`를 구현한다. |
-| `static` | 정적 산출물을 `/public`에 둔다. 차트가 static-web-server로 서빙하고 `/health`도 제공한다. |
+| `static` | Vite `dist` 산출물을 이미지의 `/public`에 둔다. 차트가 static-web-server로 서빙하고 `/health`와 SPA fallback을 제공한다. `.app-config.yml`에는 `kind: static`만 쓰며 `static.server`는 쓰지 않는다. |
 | `worker` | HTTP/Route/Probe 기본값이 없다. 장기 실행 프로세스만 준비한다. |
