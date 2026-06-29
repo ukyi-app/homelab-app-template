@@ -1,10 +1,25 @@
 import { Hono } from "hono";
+import { createRuntimePool } from "./db";
 
 const app = new Hono();
 
-// 런타임 계약(homelab 차트 probes)
+// 런타임 풀(풀러 경유). DB가 설정되지 않은 앱이면 null — readiness가 정적으로 통과한다.
+const db = createRuntimePool();
+
+// 런타임 계약(homelab 차트 probes: liveness=/healthz, readiness=/readyz)
+// liveness — 정적. DB 일시장애로 파드가 죽지 않게(라우트 검증은 readiness에서만).
 app.get("/healthz", (c) => c.text("ok"));
-app.get("/readyz", (c) => c.text("ready"));
+// readiness — DB가 설정됐으면 풀러 경유 왕복으로 풀러/conn/롤 경로를 검증, 무DB면 정적 통과.
+// ★앱별 스키마가 생기면 SELECT 1을 실제 테이블 왕복으로 교체하라(풀러/conn/롤/스키마를 함께 검증).
+app.get("/readyz", async (c) => {
+  if (!db) return c.text("ready");
+  try {
+    await db.query("SELECT 1");
+    return c.text("ready");
+  } catch (e) {
+    return c.text(`not ready: ${e instanceof Error ? e.message : String(e)}`, 503);
+  }
+});
 
 // API
 app.get("/api/hello", (c) => c.json({ message: "Hello from Hono API" }));
