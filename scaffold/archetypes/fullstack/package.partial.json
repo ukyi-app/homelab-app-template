@@ -1,0 +1,20 @@
+{
+  "scripts": {
+    "dev:web": "vite",
+    "dev:server": "bun --watch src/index.ts",
+    "build:web": "vite build",
+    "build": "vite build && bun build --compile --target=bun-linux-arm64 src/index.ts --outfile app",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0"
+  }
+}
