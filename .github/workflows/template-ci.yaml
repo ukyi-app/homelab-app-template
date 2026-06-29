@@ -1,0 +1,76 @@
+# 템플릿 드리프트 가드 — 각 아키타입을 비대화형 스캐폴드 → 빌드/계약 검증.
+# (matrix.archetype만 사용 — 신뢰 불가 입력 없음.)
+name: template-ci
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+permissions:
+  contents: read
+jobs:
+  scaffold-build:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        archetype: [fullstack, api, site, worker]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+      - name: scaffold(비대화형) → 앱 생성 + lock 재생성(scaffold 자체가 마지막에 bun install)
+        run: |
+          cp -r . /tmp/app && cd /tmp/app && rm -rf .git
+          bun install
+          bun run scaffold --archetype "$ARCHETYPE" --name "ci-$ARCHETYPE" --yes
+          test ! -d scaffold && test ! -f .github/workflows/template-ci.yaml
+        env:
+          ARCHETYPE: ${{ matrix.archetype }}
+      - name: docker build(frozen-lockfile — 첫 검증, lock 변형 前)
+        # scaffold가 재생성한 lock을 이후 어떤 install/add가 '수리'해 stale을 가리기 前에 frozen 빌드로 검증.
+        run: docker build --platform linux/arm64 -t "ci-$ARCHETYPE" /tmp/app
+        env:
+          ARCHETYPE: ${{ matrix.archetype }}
+      - name: 타입검사(필수)
+        working-directory: /tmp/app
+        run: |
+          test -f tsconfig.json || { echo "::error::tsconfig.json 누락(모든 아키타입 필수)"; exit 1; }
+          bun run build
+          bunx tsc --noEmit
+      - name: .app-config.yml 계약 검증(homelab 스키마 @main, 별도 디렉토리·fail-closed)
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/ukyi-app/homelab/main/tools/app-config-schema.json -o /tmp/schema.json \
+            || { echo "::error::homelab app-config-schema fetch 실패(경로/브랜치 확인)"; exit 1; }
+          mkdir -p /tmp/validate && cp /tmp/app/.app-config.yml /tmp/validate/cfg.yml && cd /tmp/validate
+          bun add ajv js-yaml >/dev/null
+          bun -e '
+            import Ajv from "ajv"; import { load } from "js-yaml"; import fs from "node:fs";
+            const schema = JSON.parse(fs.readFileSync("/tmp/schema.json","utf8"));
+            const cfg = load(fs.readFileSync("cfg.yml","utf8"));
+            const v = new Ajv({allErrors:true});
+            if (!v.validate(schema, cfg)) { console.error("::error::.app-config.yml 스키마 위반:", JSON.stringify(v.errors)); process.exit(1); }
+          '
+      - name: 네거티브 — 무효 config는 검증 실패해야(fail-closed 증명)
+        run: |
+          cd /tmp/validate
+          printf 'kind: web\n' > bad.yml
+          if bun -e '
+            import Ajv from "ajv"; import { load } from "js-yaml"; import fs from "node:fs";
+            const schema = JSON.parse(fs.readFileSync("/tmp/schema.json","utf8"));
+            process.exit(new Ajv().validate(schema, load(fs.readFileSync("bad.yml","utf8"))) ? 0 : 1)
+          '; then echo "::error::무효 config가 통과함 — 가드 구멍"; exit 1; else echo "negative OK(무효 config 거부)"; fi
+      - name: Dockerfile lint(선택)
+        run: docker run --rm -i hadolint/hadolint < /tmp/app/Dockerfile || true
+  scaffold-args:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+      - run: bun install
+      - name: strict-parse 네거티브 — 오타 flag·불량 name 거부
+        run: |
+          cp -r . /tmp/n1 && (cd /tmp/n1 && rm -rf .git && bun install >/dev/null && ! bun run scaffold --no-autodeplpy --yes) || { echo "::error::unknown flag 미거부"; exit 1; }
+          cp -r . /tmp/n2 && (cd /tmp/n2 && rm -rf .git && bun install >/dev/null && ! bun run scaffold --name Bad_Name --yes) || { echo "::error::불량 name 미거부"; exit 1; }
