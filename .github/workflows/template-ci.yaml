@@ -38,6 +38,20 @@ jobs:
           test -f tsconfig.json || { echo "::error::tsconfig.json 누락(모든 아키타입 필수)"; exit 1; }
           bun run build
           bunx tsc --noEmit
+      - name: 풀러-안전 가드 — db.ts가 statement_timeout을 startup 파라미터로 보내지 않음(api)
+        if: matrix.archetype == 'api'
+        working-directory: /tmp/app
+        run: |
+          test -f src/db.ts || { echo "::error::api 아키타입에 src/db.ts 부재"; exit 1; }
+          # PgBouncer transaction 모드(homelab 공유 풀러)는 statement_timeout startup GUC를 거부한다 —
+          # pg 옵션 키(statement_timeout:)로 전달하면 비양립. 주석 속 'statement_timeout'은 오탐하지 않게
+          # config-key 형태(콜론 동반)만 매칭한다.
+          if grep -Eq 'statement_timeout[[:space:]]*:' src/db.ts; then
+            echo "::error::db.ts가 statement_timeout을 pg 옵션으로 전달 — 풀러 transaction 모드와 비양립"; exit 1
+          fi
+          grep -q 'query_timeout' src/db.ts || { echo "::error::db.ts에 client-side query_timeout 부재"; exit 1; }
+          grep -q '/readyz' src/index.ts || { echo "::error::readiness(/readyz) 라우트 부재"; exit 1; }
+          echo "✅ api 풀러-안전(statement_timeout startup 미전송) + readiness 배선 확인"
       - name: .app-config.yml 계약 검증(homelab 스키마 @main, 별도 디렉토리·fail-closed)
         run: |
           curl -fsSL https://raw.githubusercontent.com/ukyi-app/homelab/main/tools/app-config-schema.json -o /tmp/schema.json \
