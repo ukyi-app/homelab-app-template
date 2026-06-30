@@ -15,18 +15,35 @@ jobs:
       app: ${{ github.event.repository.name }}
 
   # 빌드 성공 직후 homelab bump-poll을 1회 디스패치해 digest 갱신을 즉시 트리거(크론 ~60–90분 지연 제거).
-  # HOMELAB_DISPATCH_TOKEN(homelab actions:write App/PAT)이 없으면 skip — 폴링이 백스톱이라 안전.
+  # 전용 App(HOMELAB_DISPATCH_APP — homelab actions:write만)으로 만료 없는 토큰을 런마다 mint.
+  # App 미프로비저닝이면 preflight로 깨끗이 skip — 폴링이 백스톱이라 안전.
   deploy-trigger:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - name: dispatch homelab bump-poll
+      - id: pre
         env:
-          DISPATCH_TOKEN: ${{ secrets.HOMELAB_DISPATCH_TOKEN }}
+          APP_ID: ${{ secrets.HOMELAB_DISPATCH_APP_ID }}
         run: |
-          if [ -z "${DISPATCH_TOKEN}" ]; then
-            echo "::notice::HOMELAB_DISPATCH_TOKEN 미설정 — 즉시 디스패치 skip(homelab 크론 폴링이 백스톱). 소유자가 시크릿 추가 시 자동 활성."
-            exit 0
+          if [ -n "$APP_ID" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::HOMELAB_DISPATCH_APP 미설정 — 즉시 디스패치 skip(homelab 크론 폴링이 백스톱). 소유자가 App·시크릿 추가 시 자동 활성."
           fi
-          GH_TOKEN="${DISPATCH_TOKEN}" gh workflow run bump-poll.yaml -R ukyi-app/homelab \
-            && echo "::notice::homelab bump-poll 디스패치 완료 — 곧 digest bump/배포."
+      - if: steps.pre.outputs.configured == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: token
+        with:
+          app-id: ${{ secrets.HOMELAB_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.HOMELAB_DISPATCH_APP_PRIVATE_KEY }}
+          owner: ukyi-app
+          repositories: homelab
+          permission-actions: write
+      - if: steps.pre.outputs.configured == 'true'
+        name: dispatch homelab bump-poll
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          gh workflow run bump-poll.yaml -R ukyi-app/homelab
+          echo "::notice::homelab bump-poll 디스패치 완료 — 곧 digest bump/배포."
