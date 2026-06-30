@@ -1,5 +1,6 @@
-# main 머지 = 빌드 + GHCR push. 배포 반영은 homelab측 GHCR 폴링/온보딩이 권위.
-# 빌드 로직의 SSOT는 homelab의 reusable 워크플로.
+# main 머지 = 빌드 + GHCR push + homelab bump-poll 즉시 디스패치(크론 수렴 지연 제거).
+# 빌드 로직의 SSOT는 homelab의 reusable 워크플로. 배포 반영(digest 핀/머지)은 여전히 homelab측이 권위 —
+# 여기선 "즉시 폴링 1회"만 깨우고, 실패/미설정이어도 homelab 크론(bump-poll, pr-sweeper)이 백스톱.
 name: release
 on:
   push:
@@ -12,3 +13,20 @@ jobs:
     uses: ukyi-app/homelab/.github/workflows/reusable-app-build.yaml@main
     with:
       app: ${{ github.event.repository.name }}
+
+  # 빌드 성공 직후 homelab bump-poll을 1회 디스패치해 digest 갱신을 즉시 트리거(크론 ~60–90분 지연 제거).
+  # HOMELAB_DISPATCH_TOKEN(homelab actions:write App/PAT)이 없으면 skip — 폴링이 백스톱이라 안전.
+  deploy-trigger:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: dispatch homelab bump-poll
+        env:
+          DISPATCH_TOKEN: ${{ secrets.HOMELAB_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "${DISPATCH_TOKEN}" ]; then
+            echo "::notice::HOMELAB_DISPATCH_TOKEN 미설정 — 즉시 디스패치 skip(homelab 크론 폴링이 백스톱). 소유자가 시크릿 추가 시 자동 활성."
+            exit 0
+          fi
+          GH_TOKEN="${DISPATCH_TOKEN}" gh workflow run bump-poll.yaml -R ukyi-app/homelab \
+            && echo "::notice::homelab bump-poll 디스패치 완료 — 곧 digest bump/배포."
