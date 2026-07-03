@@ -1,6 +1,6 @@
 # main 머지 = 빌드 + GHCR push + homelab bump-poll 즉시 디스패치(크론 수렴 지연 제거).
-# 빌드 로직의 SSOT는 homelab의 reusable 워크플로. 배포 반영(digest 핀/머지)은 여전히 homelab측이 권위 —
-# 여기선 "즉시 폴링 1회"만 깨우고, 실패/미설정이어도 homelab 크론(bump-poll, pr-sweeper)이 백스톱.
+# 빌드·디스패치 로직 SSOT는 homelab reusable-app-build.yaml@main — deploy-trigger 잡을 흡수(PR-11a).
+# 여기선 호출만 한다: HOMELAB_DISPATCH_APP 시크릿 쌍을 passthrough(미설정=크론 백스톱, clean skip).
 name: release
 on:
   push:
@@ -13,37 +13,6 @@ jobs:
     uses: ukyi-app/homelab/.github/workflows/reusable-app-build.yaml@main
     with:
       app: ${{ github.event.repository.name }}
-
-  # 빌드 성공 직후 homelab bump-poll을 1회 디스패치해 digest 갱신을 즉시 트리거(크론 ~60–90분 지연 제거).
-  # 전용 App(HOMELAB_DISPATCH_APP — homelab actions:write만)으로 만료 없는 토큰을 런마다 mint.
-  # App 미프로비저닝이면 preflight로 깨끗이 skip — 폴링이 백스톱이라 안전.
-  deploy-trigger:
-    needs: release
-    runs-on: ubuntu-latest
-    steps:
-      - id: pre
-        env:
-          APP_ID: ${{ secrets.HOMELAB_DISPATCH_APP_ID }}
-        run: |
-          if [ -n "$APP_ID" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::HOMELAB_DISPATCH_APP 미설정 — 즉시 디스패치 skip(homelab 크론 폴링이 백스톱). 소유자가 App·시크릿 추가 시 자동 활성."
-          fi
-      - if: steps.pre.outputs.configured == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        id: token
-        with:
-          app-id: ${{ secrets.HOMELAB_DISPATCH_APP_ID }}
-          private-key: ${{ secrets.HOMELAB_DISPATCH_APP_PRIVATE_KEY }}
-          owner: ukyi-app
-          repositories: homelab
-          permission-actions: write
-      - if: steps.pre.outputs.configured == 'true'
-        name: dispatch homelab bump-poll
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-        run: |
-          gh workflow run bump-poll.yaml -R ukyi-app/homelab
-          echo "::notice::homelab bump-poll 디스패치 완료 — 곧 digest bump/배포."
+    secrets:
+      HOMELAB_DISPATCH_APP_ID: ${{ secrets.HOMELAB_DISPATCH_APP_ID }}
+      HOMELAB_DISPATCH_APP_PRIVATE_KEY: ${{ secrets.HOMELAB_DISPATCH_APP_PRIVATE_KEY }}
