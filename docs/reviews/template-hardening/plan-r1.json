@@ -1,0 +1,77 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "plan",
+  "verdict": "needs-attention",
+  "summary": "Do not ship this plan yet: core recovery behavior lacks executable acceptance paths, the Renovate story cannot achieve its stated outcome, and the risk-bearing slice order is undefined. No materially simpler approach was found that preserves all confirmed requirements.",
+  "planFile": "docs/prds/template-hardening.md",
+  "planInDiff": true,
+  "reviewedFileCount": 2,
+  "target": "working tree diff",
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 5,
+  "planFindingCount": 5,
+  "findings": [
+    {
+      "severity": "high",
+      "title": "Open question: which seam tests database failover recovery?",
+      "body": "The only specified API readiness test exercises the no-database branch and explicitly excludes database failure. It therefore never triggers the new pool error listener or proves the promised sequence: process remains alive, liveness stays 200, readiness becomes 503, and readiness recovers after reconnection. The central failure could remain unchanged while every planned test passes.",
+      "file": "docs/prds/template-hardening.md",
+      "line_start": 148,
+      "line_end": 151,
+      "confidence": 0.99,
+      "recommendation": "Name an executable seam that induces an idle-connection failure. Prefer an image-level test with temporary Postgres/PgBouncer that asserts liveness 200, readiness 503, process survival, and eventual readiness 200; otherwise define an injected-pool test covering the same transitions.",
+      "isPlanFinding": true
+    },
+    {
+      "severity": "medium",
+      "title": "Open question: which seam tests worker lifecycle behavior?",
+      "body": "The per-archetype smoke contract checks only the worker startup log. That passes with the current broken sleep behavior and cannot exercise transient-error backoff or fatal-error propagation. The generic shutdown paragraph does not resolve this explicit worker definition, and the plan never defines how transient and fatal errors are distinguished.",
+      "file": "docs/prds/template-hardening.md",
+      "line_start": 117,
+      "line_end": 120,
+      "confidence": 0.98,
+      "recommendation": "Require the worker image test to send SIGTERM during sleep and assert bounded exit time, exit code 0, and the stopped log. Define the fatal/transient classification and add an injectable task or process-level fixture that verifies transient backoff and fatal propagation.",
+      "isPlanFinding": true
+    },
+    {
+      "severity": "medium",
+      "title": "Renovate configuration cannot deliver the promised security updates",
+      "body": "The plan bundles configuration while excluding repository enrollment. The existing homelab Renovate workflow enumerates only homelab and homelab-app-template with autodiscovery disabled, so a generated repository's configuration is never read. Consequently the user story's security-update outcome remains false at completion; an untracked future follow-up is not an operational dependency.",
+      "file": "docs/prds/template-hardening.md",
+      "line_start": 125,
+      "line_end": 127,
+      "confidence": 0.99,
+      "recommendation": "Either include repository enrollment as a required cross-repository dependency before declaring the lifecycle story done, or narrow the story to Renovate readiness and record a concrete follow-up with owner, tracker, ordering, and acceptance criteria.",
+      "isPlanFinding": true
+    },
+    {
+      "severity": "medium",
+      "title": "Walking-skeleton and dependency order are undefined",
+      "body": "The plan lists roughly seven slices but identifies neither the structure-gate skeleton nor dependency edges. The test-structure/Dockerfile-gate slice establishes the hardest-to-reverse forked contract, while template-ci shutdown verification depends on runtime shutdown work. Unordered issue generation can front-load easy documentation, create overlapping server edits, or attempt acceptance tests before their behavior exists.",
+      "file": "docs/prds/template-hardening.md",
+      "line_start": 182,
+      "line_end": 185,
+      "confidence": 0.97,
+      "recommendation": "Designate the risk-bearing skeleton explicitly and state the issue DAG. The skeleton should exercise one generated archetype through app export, Dockerfile gates, image startup, and shutdown; make remaining runtime and template-ci slices depend on the relevant seam or behavior slices.",
+      "isPlanFinding": true
+    },
+    {
+      "severity": "low",
+      "title": "Open question: which seam tests fullstack development orchestration?",
+      "body": "The plan promises that one command starts both processes, preserves the API proxy, prefixes logs, and terminates both children, but no Testing Decision exercises that process behavior. Merely asserting that a generated script exists would allow the original DX failure to be replaced by a command that starts incompletely, loses proxying, or leaks a child process.",
+      "file": "docs/prds/template-hardening.md",
+      "line_start": 128,
+      "line_end": 129,
+      "confidence": 0.95,
+      "recommendation": "Add a generated-app process seam in template-ci: run `bun run dev`, wait for the web and API endpoints, verify a proxied API request, terminate the parent, and assert both child processes exit.",
+      "isPlanFinding": true
+    }
+  ],
+  "next_steps": [
+    "Revise the Testing Decisions and acceptance criteria for DB recovery, worker lifecycle behavior, and fullstack development.",
+    "Reconcile the Renovate user story with its explicitly deferred enrollment dependency.",
+    "Mark the walking skeleton and issue dependency order, then rerun the plan review."
+  ]
+}

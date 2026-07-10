@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "plan",
+  "verdict": "needs-attention",
+  "summary": "Do not ship yet: P-1 remains unresolved. P-2 through P-5 match their recorded triage decisions, and no new critical issue was introduced. No materially simpler alternative was found within the pinned re-review scope.",
+  "planFile": "docs/prds/template-hardening.md",
+  "planInDiff": true,
+  "reviewedFileCount": 2,
+  "target": "working tree diff",
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 1,
+  "planFindingCount": 1,
+  "findings": [
+    {
+      "severity": "high",
+      "title": "Database recovery transition is still untested",
+      "body": "The plan says the stub-pool tests cover all three recovery transitions, but step ③ replaces the failed configured pool with a null pool and asserts the separate no-database branch returns 200. It never proves that the same configured pool recovers after an error and 503, so reconnection could remain broken while every planned test passes. The injected prebuilt pool may also bypass the production listener-registration path described as occurring during pool creation.",
+      "file": "docs/prds/template-hardening.md",
+      "line_start": 153,
+      "line_end": 159,
+      "confidence": 0.99,
+      "recommendation": "Use one stateful injected pool and app instance: emit the pool error, assert process survival, make readiness return 503, then allow the same pool to succeed and assert eventual 200. Specify a shared listener-registration path used by both production-created and injected pools.",
+      "isPlanFinding": true
+    }
+  ],
+  "next_steps": [
+    "Correct the P-1 acceptance sequence and listener-wiring seam before proceeding past the plan gate."
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "plan",
+  "verdict": "approve",
+  "summary": "P-6 is resolved: the plan requires production-created and injected pools to share listener registration, then tests one stateful pool and app through error emission, survival, readiness 503, and recovery to 200. No new critical issue or materially simpler alternative exists within the pinned scope.",
+  "planFile": "docs/prds/template-hardening.md",
+  "planInDiff": true,
+  "reviewedFileCount": 3,
+  "target": "working tree diff",
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 0,
+  "planFindingCount": 0,
+  "findings": [],
+  "next_steps": [
+    "Proceed past the plan gate while preserving this sequence as executable acceptance criteria."
+  ]
+}
