@@ -3,7 +3,15 @@ feature: template-hardening
 invariant-class: feature      # Rule 0: 리뷰 확정 13건 배치 — >1 behavior flips (SIGTERM/pg-error/CI 게이트/Renovate 등)
 entry-track: feature          # feature | architecture | inbound | bug
 review-track: standard        # light | standard | full — 기존 템플릿 hardening 배치, 신규 skeleton 구조 없음
-pipeline-stage: prd           # intake 완료(그릴 + 도메인 모델링) → to-prd 대기
+pipeline-stage: executing     # PRD 확정(plan gate r3 approve) → 이슈 DAG 실행 중
+worktree: .worktrees/template-hardening
+branch: template-hardening
+consent-scope: |
+  2026-07-12 사람 동의: 이슈 I-1~I-7을 워크트리 .worktrees/template-hardening
+  (브랜치 template-hardening, base main)에서 직렬 실행. 이슈당 신선한 구현
+  서브에이전트 디스패치(tdd, PRD 사전 합의 seam) → 컨덕터측 code-review
+  (Spec 먼저 clean → Standards) → 커밋 + 이슈 클로즈. main 직접 커밋 금지,
+  병합은 landing 단계에서 별도 확인.
 issue-tracker: none
 prd-published: false
 inbound-issue:                # inbound track only
