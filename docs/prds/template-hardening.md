@@ -3,9 +3,11 @@ feature: template-hardening
 invariant-class: feature
 entry-track: feature
 review-track: standard
-pipeline-stage: issues
-issue-tracker: none
-prd-published: false
+pipeline-stage: executing
+issue-tracker: local
+prd-published: true
+issues: [I-1, I-2, I-3, I-4, I-5, I-6, I-7]
+skeleton-issue: []   # standard 트랙 — structure gate 미실행, 배리어 비활성(P-4 결정)
 ---
 
 # template-hardening — 스캐폴드 산출물 런타임·수명주기 강화
