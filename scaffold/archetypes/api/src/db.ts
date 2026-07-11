@@ -14,18 +14,22 @@ export function createPool(connectionString: string): Pool {
 }
 
 // homelab conn SealedSecret은 <APP>_DATABASE_URL / <APP>_MIGRATE_DATABASE_URL / <APP>_RO_DATABASE_URL
-// 형태로 env를 주입한다(provision-db 규약). 앱 이름을 몰라도 되도록 접미사로 자동 발견한다 — generic
-// DATABASE_URL(접두사 없음)도 허용. 런타임 URL은 MIGRATE_/RO_ 키를 제외한다.
-function discover(suffix: string, exclude: string[]): string | undefined {
-  if (process.env[suffix]) return process.env[suffix];
-  const key = Object.keys(process.env).find(
+// 형태로 env를 주입한다(provision-db 규약). 앱 이름을 몰라도 되도록 접미사로 자동 발견하되, 접두사 없는
+// generic DATABASE_URL이 있으면 그쪽이 우선한다(접미사 매칭은 generic이 없을 때만 돈다).
+// 런타임 URL은 MIGRATE_/RO_ 키를 제외한다.
+type Env = Record<string, string | undefined>;
+
+function discover(env: Env, suffix: string, exclude: string[]): string | undefined {
+  if (env[suffix]) return env[suffix];
+  const key = Object.keys(env).find(
     (k) => k.endsWith(`_${suffix}`) && !exclude.some((x) => k.endsWith(x)),
   );
-  return key ? process.env[key] : undefined;
+  return key ? env[key] : undefined;
 }
 
-export function runtimeUrl(): string | undefined {
-  return discover("DATABASE_URL", ["_MIGRATE_DATABASE_URL", "_RO_DATABASE_URL"]);
+// env를 주입받는 순수 함수 — 프로세스 환경을 흔들지 않고 발견 규칙을 단위 테스트할 수 있다.
+export function runtimeUrl(env: Env = process.env): string | undefined {
+  return discover(env, "DATABASE_URL", ["_MIGRATE_DATABASE_URL", "_RO_DATABASE_URL"]);
 }
 
 // DB가 설정되지 않은 앱(무DB)이면 null — readiness가 정적으로 통과하도록.
