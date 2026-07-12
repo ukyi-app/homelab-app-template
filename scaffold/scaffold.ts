@@ -212,7 +212,8 @@ const doc = DOC[archetype];
 if (name !== derived) warn(`앱 이름 '${name}'이(가) 유도값 '${derived}'와 다르다 — 이 값은 배포 식별자가 아니며 GitHub 레포명과 같아야 한다(create-app이 repoName === app을 강제).`);
 
 // --- 롤백: 전개 前 루트 엔트리 스냅샷 → 실패 시 '새로 생긴' 루트 엔트리만 제거한다. 되돌리지 못하는 두 부류가 남는다:
-//     (a) 제자리 덮어쓴 파일 — package.json·README.md·.gitignore(+ install 진행도에 따라 bun.lock)는 수정된 채 남는다.
+//     (a) 제자리 덮어쓴 파일 — package.json·README.md·.gitignore·renovate.json(+ install 진행도에 따라 bun.lock)는 수정된 채 남는다.
+//         renovate.json은 템플릿 루트에도 있어 common/renovate.json이 '새 엔트리'가 아니라 덮어쓰기가 된다.
 //     (b) 이미 있던 디렉토리 안에 들어간 파일 — .github/는 template-ci.yaml 때문에 존재하므로 '새 엔트리'가 아니고,
 //         그 안의 .github/workflows/release.yaml은 untracked로 살아남는다.
 //     완전 복구는 `git checkout . && git clean -fd` — checkout만으로는 untracked인 (b)가 지워지지 않는다.
@@ -298,7 +299,7 @@ rmSync(join(ROOT, "package.partial.json"));
 // --- lockfile 재생성(자가삭제 前) — package.json 재작성으로 deps가 바뀌었으므로 bun.lock도 갱신해야
 //     Dockerfile의 `bun install --frozen-lockfile`이 첫 GHCR 빌드에서 통과한다. 실패 시 롤백+비0 종료. ---
 const inst = Bun.spawnSync(["bun", "install"], { cwd: ROOT, stdout: "inherit", stderr: "inherit" });
-if (inst.exitCode !== 0) { console.error("❌ bun install(lock 재생성) 실패 — 새로 생긴 루트 엔트리만 제거했다. 제자리 수정(package.json·README.md·.gitignore, 경우에 따라 bun.lock)과 .github/workflows/release.yaml은 남아 있고, package.json 재작성으로 scripts.scaffold가 지워져 `bun run scaffold`는 더 이상 없다 — `git checkout . && git clean -fd`로 트리를 되돌려야 재실행할 수 있다(.git 없는 사본이면 템플릿 사본을 다시 뜰 것)"); rollback(); process.exit(1); }
+if (inst.exitCode !== 0) { console.error("❌ bun install(lock 재생성) 실패 — 새로 생긴 루트 엔트리만 제거했다. 제자리 수정(package.json·README.md·.gitignore·renovate.json, 경우에 따라 bun.lock)과 .github/workflows/release.yaml은 남아 있고, package.json 재작성으로 scripts.scaffold가 지워져 `bun run scaffold`는 더 이상 없다 — `git checkout . && git clean -fd`로 트리를 되돌려야 재실행할 수 있다(.git 없는 사본이면 템플릿 사본을 다시 뜰 것)"); rollback(); process.exit(1); }
 
 // --- 자가삭제 (lock 재생성 성공 후에만) ---
 rmSync(SCAFFOLD, { recursive: true, force: true });
