@@ -38,7 +38,12 @@ while (running) {
     console.log("tick", new Date().toISOString());
   } catch (e) {
     // 일시 오류가 프로세스를 즉사시키지 않게 흡수한다. 치명/일시 분류는 작업을 채우는 쪽의 몫.
-    console.error("tick failed", e);
+    // ★에러 객체를 그대로 넘기지 않는다 — 콘솔이 객체를 펼치면 거기 매달린 자격증명까지 찍힌다
+    //   (실측: pg는 err에 Client를 매달아 DB password를 평문으로 흘린다 — api의 src/db.ts가 같은 이유로 같은 규율을 쓴다).
+    //   위 TODO가 DB·SDK 호출로 채워지는 순간 그 유출이 중앙 로그로 간다 — 진단에 필요한 필드만 뽑는다.
+    //   String(e)는 Error가 아닌 throw(문자열·객체)용 최후 수단이다 — 객체를 펼치지 않으니 매달린 값이 새지 않는다.
+    const { code, stack, message } = e as Error & { code?: string };
+    console.error(`tick failed (code=${code ?? "none"}): ${stack ?? message ?? String(e)}`);
     delay = BACKOFF_MS;
   }
   await sleep(delay);

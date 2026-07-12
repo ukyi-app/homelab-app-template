@@ -3,7 +3,7 @@
 // pnpm create vite 류 UX. 실행 후 자기 자신을 삭제한다(앱 레포에 템플릿 전용 머신러리·문서 미잔존).
 import { intro, outro, select, text, confirm, isCancel, cancel } from "@clack/prompts";
 import { stringify as toYaml } from "yaml";
-import { cpSync, rmSync, existsSync, writeFileSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { cpSync, rmSync, existsSync, writeFileSync, readFileSync, readdirSync, realpathSync, lstatSync } from "node:fs";
 import { basename, join } from "node:path";
 
 const ROOT = process.cwd();
@@ -134,8 +134,8 @@ for (let i = 0; i < argv.length; i++) {
 const NONINT = flags["--yes"] === true || !process.stdin.isTTY;
 // homelab tools/lib/identity.ts의 APP_NAME_RE와 동일(소문자 시작·trailing hyphen 금지·길이 2..40).
 const NAME_RE = /^[a-z][a-z0-9-]{0,38}[a-z0-9]$/;
-const validName = (n: string): string => {
-  if (!NAME_RE.test(n)) { console.error(`앱 이름 불량(소문자 시작, 소문자/숫자/하이픈, trailing hyphen 금지, 2..40자): '${n}'`); process.exit(2); }
+const validName = (n: string, what = "앱 이름"): string => {
+  if (!NAME_RE.test(n)) { console.error(`${what} 불량(소문자 시작, 소문자/숫자/하이픈, trailing hyphen 금지, 2..40자): '${n}'`); process.exit(2); }
   return n;
 };
 const warn = (m: string) => console.error(`⚠️  ${m}`);
@@ -169,7 +169,11 @@ const deriveName = (): string => {
   }
   return repo;
 };
-const derived = deriveName();
+// 배포 식별자 — origin 레포명(없으면 디렉토리명)에서만 유도된다. --name(표시 이름)은 이 값을 바꾸지 못한다:
+// 봉인 산출물 이름(<app>-secrets)이 여기서 나오고 create-app이 `sealed name === <레포명>-secrets`를 하드 강제하므로,
+// secret:seal --app에 표시 이름을 박으면 온보딩이 거부된다(경고해 놓고 그 상태를 만들지 않는다).
+// fallback(디렉토리명)까지 예외 없이 검증하는 이유: 이 값은 package.json 스크립트 문자열에 그대로 박힌다.
+const deployName = validName(deriveName(), "배포 식별자(origin 레포명, 없으면 디렉토리명)");
 
 async function ask(): Promise<{ archetype: Arch; name: string; pub: boolean; metrics: boolean; autoDeploy: boolean }> {
   if (NONINT) {
@@ -182,7 +186,7 @@ async function ask(): Promise<{ archetype: Arch; name: string; pub: boolean; met
     // 여기서 값을 한 번 더 꺾으면 같은 지식의 사본이 늘 뿐이다). 알 수 없는 플래그는 위 파서에서 exit 2 — 오타와 의도는 다르게 다룬다.
     if (pub && !CAP[k].route) warn(`--public 무시: kind=${k}는 서빙하지 않아 route가 없다`);
     if (metrics && !CAP[k].metrics) warn(`--metrics 무시: kind=${k}는 metrics(:9090)를 노출하지 않는다`);
-    return { archetype: a, name: validName((flags["--name"] as string) ?? derived), pub, metrics, autoDeploy: flags["--no-autodeploy"] !== true };
+    return { archetype: a, name: validName((flags["--name"] as string) ?? deployName), pub, metrics, autoDeploy: flags["--no-autodeploy"] !== true };
   }
   intro("homelab 앱 스캐폴드");
   const ARCH_OPTIONS: { value: Arch; label: string }[] = [
@@ -193,7 +197,7 @@ async function ask(): Promise<{ archetype: Arch; name: string; pub: boolean; met
   ];
   const archetype = (await select({ message: "아키타입", options: ARCH_OPTIONS, initialValue: "fullstack" })) as Arch;
   if (isCancel(archetype)) { cancel("취소"); process.exit(0); }
-  const name = (await text({ message: "앱 이름", initialValue: derived, validate: (v) => (NAME_RE.test(v) ? undefined : "소문자 시작·소문자/숫자/하이픈·trailing hyphen 금지·2..40자") })) as string;
+  const name = (await text({ message: "앱 이름", initialValue: deployName, validate: (v) => (NAME_RE.test(v) ? undefined : "소문자 시작·소문자/숫자/하이픈·trailing hyphen 금지·2..40자") })) as string;
   if (isCancel(name)) { cancel("취소"); process.exit(0); }
   const cap = CAP[KIND[archetype]];
   const pub = cap.route ? ((await confirm({ message: "공개 노출(ukyi.app)? (아니오=home.ukyi.app 내부)", initialValue: false })) as boolean) : false;
@@ -209,7 +213,8 @@ const doc = DOC[archetype];
 // 배포 식별자는 레포명 하나에서 파생된다(ADR-0002) — 유도값과 다른 이름은 경고만 한다.
 // 하드 강제는 homelab create-app이 하고, CI가 임시 디렉토리에서 `--name ci-<archetype>`으로
 // 스캐폴드하는 정당한 사용처가 있어 여기서 실패시키면 안 된다.
-if (name !== derived) warn(`앱 이름 '${name}'이(가) 유도값 '${derived}'와 다르다 — 이 값은 배포 식별자가 아니며 GitHub 레포명과 같아야 한다(create-app이 repoName === app을 강제).`);
+// name은 표시용(package.json name·README)일 뿐이라 배포 산출물(secret:seal --app)엔 닿지 않는다 — 경고가 그 사실을 말한다.
+if (name !== deployName) warn(`앱 이름 '${name}'이(가) 유도값 '${deployName}'와 다르다 — 이 값은 배포 식별자가 아니라 표시 이름(package.json name·README)이며 GitHub 레포명과 같아야 한다(create-app이 repoName === app을 강제). 봉인은 유도값으로 돈다: secret:seal --app ${deployName} → deploy/${deployName}-secrets.sealed.yaml.`);
 
 // --- 롤백: 전개 前 루트 엔트리 스냅샷 → 실패 시 '새로 생긴' 루트 엔트리만 제거한다. 되돌리지 못하는 두 부류가 남는다:
 //     (a) 제자리 덮어쓴 파일 — package.json·README.md·.gitignore·renovate.json(+ install 진행도에 따라 bun.lock)는 수정된 채 남는다.
@@ -266,6 +271,36 @@ for (const src of ["common", `archetypes/${archetype}`]) for (const p of SELF_DE
   if (existsSync(join(SCAFFOLD, src, p))) die(`scaffold/${src}/${p} 이(가) 있다 — 전개되면 ROOT/${p}이 되지만 그 경로는 스캐폴드 마지막에 통째로 지워진다(템플릿 전용 경로). 앱에 도달할 수 없다(조용히 사라진다) — 앱에 줄 내용은 앱이 실제로 갖고 가는 파일에 넣어라(앱 문서는 scaffold/common/README.app.md).`);
 }
 
+// --- 사용자 파일 보호(전개 前 — 아무것도 건드리기 전에 죽는다) ---
+// 위 삭제 목록은 마지막에 '통째로' 지워진다. 그 경로에 템플릿이 싣지 않은 파일이 있으면 그건 사용자가 쓴 것이고
+// (레포를 만들자마자 docs/에 메모를 시작하는 건 정당하다), 지금 코드는 그걸 exit 0·무경고로 파괴한다.
+// 기준은 '이 레포의 최초 커밋 트리' = 템플릿이 실어 보낸 스냅샷 그 자체("Use this template"이 만드는 커밋).
+//   ★낡을 수 없다: 목록을 코드에 베끼지 않는다(베끼면 템플릿 docs가 늘 때마다 어긋난다). 템플릿의 docs가 바뀌면
+//     그 템플릿으로 만든 레포의 최초 커밋도 함께 바뀌므로, 기준은 언제나 '그 사본이 실제로 받은 것'이다.
+//   ★tracked 여부로 판정하지 않는다 — 메모를 먼저 커밋한 사용자를 놓친다(tracked인데 템플릿 것이 아니다).
+//     최초 커밋 '이후'에 생긴 파일은 커밋했든 안 했든 전부 사용자 것이다.
+// git이 없는 사본(template-ci의 `rm -rf .git`)엔 기준 자체가 없다 — 귀속이 불가능하므로 가드는 돌지 않는다.
+const inRepo = (() => { const t = git("rev-parse", "--show-toplevel"); return t !== null && realpath(t) === realpath(ROOT); })();
+const roots = inRepo ? git("rev-list", "--max-parents=0", "HEAD")?.split("\n").filter(Boolean) : undefined;
+if (roots?.length) {
+  // -z: 경로에 특수문자가 있으면 git이 따옴표로 감싸 이스케이프한다 — NUL 구분자로 받으면 그 변형이 없다.
+  const zLines = (...a: string[]): string[] => (git(...a) ?? "").split("\0").filter(Boolean);
+  const shipped = new Set(roots.flatMap((sha) => zLines("ls-tree", "-r", "--name-only", "-z", sha)));
+  // gitignore된 파일(.DS_Store 등)은 사용자의 '데이터'가 아니다 — 여기서 걸면 맥에서 스캐폴드가 못 돈다.
+  for (const f of zLines("ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", ...SELF_DELETE)) shipped.add(f);
+  // lstat: 심볼릭 링크를 따라가지 않는다(링크 너머 사용자 트리로 걸어 들어가지 않게).
+  const walk = (rel: string): string[] => existsSync(join(ROOT, rel))
+    ? (lstatSync(join(ROOT, rel)).isDirectory() ? readdirSync(join(ROOT, rel)).flatMap((e) => walk(`${rel}/${e}`)) : [rel])
+    : [];
+  const mine = SELF_DELETE.flatMap(walk).filter((f) => !shipped.has(f));
+  if (mine.length) {
+    // exit 2(사용자 입력 오류)다 — 템플릿은 어긋나지 않았고(그건 exit 1), 고칠 수 있는 건 사용자의 트리 상태뿐이다.
+    const shown = mine.slice(0, 20).map((f) => `   ${f}`).join("\n") + (mine.length > 20 ? `\n   …외 ${mine.length - 20}개` : "");
+    console.error(`❌ 템플릿 전용 경로(${SELF_DELETE.join(", ")})에 템플릿이 싣지 않은 파일이 있다 — 스캐폴드 마지막에 그 경로들은 통째로 지워진다. 지금 진행하면 아래 파일이 경고 없이 사라진다:\n${shown}\n\n이 파일들을 템플릿 전용 경로 밖으로 옮긴 뒤(예: docs/ 아래 메모 → 앱 소스나 레포 루트) 다시 실행해라. 아무것도 건드리지 않았다.`);
+    process.exit(2);
+  }
+}
+
 // --- 전개 ---
 cpSync(join(SCAFFOLD, "common"), ROOT, { recursive: true });
 cpSync(join(SCAFFOLD, "archetypes", archetype), ROOT, { recursive: true });
@@ -277,8 +312,11 @@ const render = (file: string, vars: Record<string, string>): string => {
   if (left.length) die(`${file}: 치환되지 않은 자리표시자 ${left.join(", ")}`);
   return out;
 };
+// APP(표시 이름)과 DEPLOY(배포 식별자)를 갈라 넘긴다 — 둘이 다를 수 있게 된 순간(--name),
+// '봉인 파일명·secret:seal --app'을 APP으로 쓰던 문장은 거짓이 된다. 배포 정체성을 말하는 자리엔 DEPLOY만 쓴다.
 writeFileSync(join(ROOT, "README.md"), render("README.app.md", {
   APP: name,
+  DEPLOY: deployName,
   ARCHETYPE: archetype,
   RUNTIME: doc.runtime,
   GATES: doc.gates.map((g) => `\`${g}\``).join(" → "),
@@ -312,10 +350,11 @@ delete pkg.devDependencies?.["@clack/prompts"];
 delete pkg.devDependencies?.yaml;
 pkg.scripts = { ...pkg.scripts, ...partial.scripts }; // partial은 위 가드가 이미 읽었다(같은 파일을 두 번 읽지 않는다).
 // 모든 앱은 SealedSecret 봉인 가능(common/tools/seal-secret.mts + cert 상속) — kubeseal CLI 필요.
-// --app을 베이크해 봉인 산출물 이름(<app>-secrets)이 실행 디렉토리명이 아니라 앱 이름에서 파생되게 한다
+// --app을 베이크해 봉인 산출물 이름(<app>-secrets)이 실행 디렉토리명이 아니라 배포 식별자에서 파생되게 한다
 // (미지정 시 seal-secret이 cwd basename으로 fallback → 클론 디렉토리명이 다르면 create-app 온보딩 검사에서 리젝).
-// name은 NAME_RE(소문자/숫자/하이픈)를 통과했으므로 셸·JSON 인용을 깨뜨릴 문자가 없다.
-pkg.scripts["secret:seal"] = `bun tools/seal-secret.mts --config .app-config.yml --env .env --app ${name}`;
+// 표시 이름(name)이 아니라 deployName이다 — create-app이 `<레포명>-secrets`를 하드 강제하므로 --name은 여기에 닿으면 안 된다.
+// deployName은 NAME_RE(소문자/숫자/하이픈)를 통과했으므로 셸·JSON 인용을 깨뜨릴 문자가 없다.
+pkg.scripts["secret:seal"] = `bun tools/seal-secret.mts --config .app-config.yml --env .env --app ${deployName}`;
 if (partial.dependencies) pkg.dependencies = { ...pkg.dependencies, ...partial.dependencies };
 if (partial.devDependencies) pkg.devDependencies = { ...pkg.devDependencies, ...partial.devDependencies };
 writeFileSync(join(ROOT, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
