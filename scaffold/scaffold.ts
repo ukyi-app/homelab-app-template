@@ -301,8 +301,16 @@ rmSync(join(ROOT, "package.partial.json"));
 const inst = Bun.spawnSync(["bun", "install"], { cwd: ROOT, stdout: "inherit", stderr: "inherit" });
 if (inst.exitCode !== 0) { console.error("❌ bun install(lock 재생성) 실패 — 새로 생긴 루트 엔트리만 제거했다. 제자리 수정(package.json·README.md·.gitignore·renovate.json, 경우에 따라 bun.lock)과 .github/workflows/release.yaml은 남아 있고, package.json 재작성으로 scripts.scaffold가 지워져 `bun run scaffold`는 더 이상 없다 — `git checkout . && git clean -fd`로 트리를 되돌려야 재실행할 수 있다(.git 없는 사본이면 템플릿 사본을 다시 뜰 것)"); rollback(); process.exit(1); }
 
-// --- 자가삭제 (lock 재생성 성공 후에만) ---
+// --- 템플릿 전용 머신러리 제거 (lock 재생성 성공 後에만 — 이 앞에서 지우면 롤백이 되돌리지 못하는
+//     '지워진 원본'이 생겨 위 롤백 주석·실패 메시지가 거짓이 된다. 롤백은 '새로 생긴' 엔트리만 지운다). ---
 rmSync(SCAFFOLD, { recursive: true, force: true });
 rmSync(join(ROOT, ".github/workflows/template-ci.yaml"), { force: true });
+// .bun-version은 템플릿 레포에만 있을 이유가 있다: Renovate가 bun을 올릴 수 있는 '쓰기 가능한' 파일이고
+// (App 토큰에 workflows:write가 없어 워크플로엔 버전을 못 박는다) 그걸 읽는 건 템플릿 CI(setup-bun의
+// bun-version-file)뿐이다. 앱엔 그 독자가 없다 — Dockerfile이 `FROM oven/bun:X`로 스스로 핀하고
+// release.yaml은 homelab 재사용 워크플로를 부를 뿐 setup-bun을 쓰지 않는다. 그런데 Renovate엔 .bun-version을
+// 읽는 내장 bun-version 매니저가 있어, 남겨두면 앱 레포마다 아무도 읽지 않는 파일을 올리는 renovate/bun-1.x
+// PR이 영구히 열린다 — 죽은 파일을 실어 보내고 그걸 알아챈 봇을 앱 renovate.json에서 입막음하는 건 해법이 아니다.
+rmSync(join(ROOT, ".bun-version"), { force: true });
 
 outro(`✅ ${name} (${archetype}/${kind}) 스캐폴드 완료 — git add -A && git commit && git push → owner가 homelab create-app 디스패치`);

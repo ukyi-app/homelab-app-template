@@ -1,5 +1,15 @@
-# 템플릿 드리프트 가드 — 각 아키타입을 비대화형 스캐폴드 → 빌드/계약 검증.
+# 템플릿 드리프트 가드 — 각 아키타입을 비대화형 스캐폴드 → 빌드/기동/계약 검증.
 # (matrix.archetype만 사용 — 신뢰 불가 입력 없음.)
+#
+# ⚠️ 서드파티 액션은 커밋 SHA로 핀한다(homelab 규약) — 이 워크플로는 포크 PR에서도 돌아
+#    이동 태그(@v4)를 쓰면 태그 이동/탈취가 그대로 공급망 표면이 된다.
+#    ★핀 갱신은 수동이다 — homelab의 Renovate App 토큰에 workflows:write가 없어 Renovate가
+#      .github/workflows/*를 push하지 못한다(SHA를 자동으로 못 올린다). 액션을 올릴 때는
+#      `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`로 SHA를 확인해 손으로 고치고 주석의
+#      버전도 함께 고친다. 토큰 스코프 확장은 follow-up.
+#    ★같은 이유로 bun 버전은 이 파일에 두지 않는다 — 루트 .bun-version이 SSOT이고 setup-bun은
+#      bun-version-file로 그걸 읽는다. Renovate가 쓸 수 있는 경로라야 Dockerfile 4곳과 한 PR로 묶인다
+#      (아래 'bun 버전 정합' 스텝과 루트 renovate.json이 이 배선을 양쪽에서 못 박는다).
 name: template-ci
 on:
   push:
@@ -9,6 +19,12 @@ on:
     - cron: "0 6 * * 1"   # 주간(월 06:00 UTC) — 템플릿 무변경에도 homelab app-config-schema @main 드리프트 재검증(M18)
 permissions:
   contents: read
+defaults:
+  run:
+    # 러너 기본 셸은 `bash -e`다 — 파이프라인은 '마지막' 명령의 상태만 보므로 `docker logs | grep`의
+    # 앞단(docker logs) 실패가 뒤(grep)의 성공에 가려 초록으로 지나간다. shell: bash를 명시하면
+    # `bash --noprofile --norc -eo pipefail`로 돌아 그 구멍이 닫힌다(아래 가드들이 파이프에 기대고 있다).
+    shell: bash
 jobs:
   scaffold-build:
     runs-on: ubuntu-24.04-arm
@@ -17,10 +33,11 @@ jobs:
       matrix:
         archetype: [fullstack, api, site, worker]
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.3.14
+          # 숫자를 여기 박지 않는다 — 루트 .bun-version이 SSOT다(파일 헤더 ★ 참조).
+          bun-version-file: .bun-version
       - name: scaffold(비대화형) → 앱 생성 + lock 재생성(scaffold 자체가 마지막에 bun install)
         run: |
           cp -r . /tmp/app && cd /tmp/app && rm -rf .git
@@ -34,6 +51,139 @@ jobs:
         run: docker build --platform linux/arm64 -t "ci-$ARCHETYPE" /tmp/app
         env:
           ARCHETYPE: ${{ matrix.archetype }}
+      # --- 스모크 런: 빌드 통과 ≠ 기동 성공. 빌더/런타임 베이스의 glibc 갭, 엔트리포인트·경로·포트
+      #     어긋남은 build만으로는 전부 초록이다. 아래 3스텝이 4개 아키타입을 실제로 기동해 런타임 계약을 건드린다.
+      #     고정 sleep은 쓰지 않는다(러너 부하에 따라 흔들려 플레이크가 된다) — 상한을 둔 폴링만 쓰고,
+      #     실패하면 컨테이너 로그를 뱉고 죽는다(로그 없는 빨간 X를 남기지 않는다).
+      - name: 스모크 런 — web/api가 '차트가 찌를 그 경로'에서 200 + 계약 본문을 주는가
+        if: matrix.archetype == 'fullstack' || matrix.archetype == 'api'
+        run: |
+          C="smoke-$ARCHETYPE"
+          # ★경로를 여기 하드코딩하면 이 스텝의 존재 이유가 사라진다. 차트가 실제로 찌르는 건
+          #   .app-config.yml의 probes.*.path이고, 그 값의 SSOT는 scaffold.ts다. 스키마 검증은 경로 '값'을
+          #   보지 않으므로 scaffold.ts가 /healthz → /livez로 드리프트해도 스키마는 초록이고, 하드코딩된
+          #   스모크도 (앱이 여전히 /healthz를 서빙하니) 초록이다 — 그런데 클러스터에선 차트가 /livez를 찔러
+          #   404 → CrashLoopBackOff. 그래서 '설정이 선언한 경로'를 뽑아 그 경로를 찌른다.
+          #   (Bun.YAML은 bun 런타임 내장 — 의존 설치 없이 아래 스키마 검증 스텝과 같은 파일을 같은 방식으로 읽는다.)
+          paths=$(bun -e '
+            const cfg = Bun.YAML.parse(await Bun.file("/tmp/app/.app-config.yml").text());
+            const l = cfg?.probes?.liveness?.path, r = cfg?.probes?.readiness?.path;
+            if (!l || !r) { console.error("::error::.app-config.yml에 probes.{liveness,readiness}.path 부재 — kind=web에 차트가 걸 프로브가 없다"); process.exit(1); }
+            console.log(l); console.log(r);
+          ') || { echo "::error::.app-config.yml에서 probe 경로를 뽑지 못했다(설정 생성이 깨졌다)"; exit 1; }
+          live=$(printf '%s\n' "$paths" | sed -n 1p)
+          ready=$(printf '%s\n' "$paths" | sed -n 2p)
+          # api는 무DB일 때 readiness가 정적 통과한다(src/db.ts의 null 풀) — 그래서 Postgres 없이 이미지 하나로 끝난다.
+          fail() { echo "::error::$1"; echo "--- $C logs ---"; docker logs "$C" 2>&1 | tail -n 50 || true; docker rm -f "$C" >/dev/null 2>&1 || true; exit 1; }
+          docker run -d --name "$C" -p 18080:8080 "ci-$ARCHETYPE" >/dev/null || { echo "::error::컨테이너 기동 실패(docker run) — 이미지가 없거나 포트 18080이 점유됐다"; exit 1; }
+          # ★상태코드만 보면 안 된다 — fullstack은 SPA catch-all이 '어떤' 경로든 index.html을 200으로 돌려준다.
+          #   프로브 라우트가 통째로 사라져도 200이 온다(= k8s가 죽은 파드를 살아있다고 오판하는 바로 그 경로,
+          #   src/index.test.ts가 등록 순서로 지키는 것과 같은 계약을 여기선 이미지 레벨에서 지킨다).
+          #   본문까지 단언해야 probe가 falsifiable하다: 실측으로 status-only 프로브는 이 회귀를 초록으로 통과시켰다.
+          #   본문('ok'/'ready')은 앱 자신의 계약이라 여기 남는다 — 드리프트하는 건 경로(설정) 쪽이다.
+          probe() {
+            local path="$1" want="$2" code="" body="" out="" ec=""
+            for _ in $(seq 1 60); do   # 60 × 0.5s = 30s 상한(고정 sleep 금지 — 러너 부하에 흔들린다)
+              if [ "$(docker inspect -f '{{.State.Running}}' "$C" 2>/dev/null)" != "true" ]; then
+                ec=$(docker inspect -f '{{.State.ExitCode}}' "$C" 2>/dev/null || echo '?')
+                fail "$path 확인 前 컨테이너가 조기 종료(exit $ec) — 기동 자체가 실패"
+              fi
+              out=$(curl -sS -w '\n%{http_code}' "http://127.0.0.1:18080$path" 2>/dev/null) || out=$'\n000'
+              code=$(printf '%s' "$out" | tail -n 1)
+              body=$(printf '%s' "$out" | sed '$d')
+              if [ "$code" = "200" ] && [ "$body" = "$want" ]; then echo "✅ $path → 200 '$body'"; return 0; fi
+              sleep 0.5
+            done
+            fail "$path이 30s 내 [200 + 본문 '$want']를 반환하지 않음(마지막: code=$code body='$(printf '%s' "$body" | tr -d '\n' | cut -c1-60)') — 설정이 선언한 경로를 앱이 서빙하지 않는다"
+          }
+          probe "$live"  ok      # liveness  — 경로는 .app-config.yml probes.liveness.path에서 유도
+          probe "$ready" ready   # readiness — 경로는 .app-config.yml probes.readiness.path에서 유도
+          docker rm -f "$C" >/dev/null || true
+        env:
+          ARCHETYPE: ${{ matrix.archetype }}
+      - name: 스모크 런 — site 기동(최소 인자) 후 헬스 경로가 200인가
+        if: matrix.archetype == 'site'
+        run: |
+          C=smoke-site
+          # SWS는 인자 없이는 이 이미지를 서빙하지 못한다(포트·루트) — 프로덕션에선 homelab 차트가 인자를 주입한다.
+          # 여기서는 차트의 인자 집합을 재현하지 않고(그건 차트의 계약이다) 최소 3개만 준다: 포트·루트·헬스.
+          # ★--page-fallback은 일부러 빼둔다 — 그걸 주면 존재하지 않는 경로도 index.html을 200으로 돌려받아
+          #   /health가 실제로 살아있는지 구분할 수 없게 된다(위 web 프로브가 실측으로 밟은 함정).
+          # non-root도 재현하지 않는다 — 이 이미지는 USER를 두지 않고 파드 securityContext가 강제한다.
+          # site의 /health는 SWS의 --health가 여는 엔드포인트지, 차트가 config에서 읽어 찌르는 프로브가 아니다.
+          # 그 전제(=site는 probes를 선언하지 않는다)를 여기서 못 박는다 — 스키마는 kind별로 probes를 막지 않으므로
+          # scaffold.ts가 site에 probes를 넣기 시작하면 차트는 SWS에 없는 경로를 찌르는데 아무도 모른다.
+          bun -e '
+            const cfg = Bun.YAML.parse(await Bun.file("/tmp/app/.app-config.yml").text());
+            if (cfg?.probes) { console.error("::error::site config가 probes를 선언했다 — 차트가 그 경로를 찌른다. 이 스모크가 그 경로를 검증하도록 가드를 고쳐라"); process.exit(1); }
+          '
+          fail() { echo "::error::$1"; echo "--- $C logs ---"; docker logs "$C" 2>&1 | tail -n 50 || true; docker rm -f "$C" >/dev/null 2>&1 || true; exit 1; }
+          docker run -d --name "$C" -p 18080:8080 ci-site --port 8080 --root /public --health >/dev/null || { echo "::error::site 컨테이너 기동 실패(docker run) — 이미지가 없거나 포트 18080이 점유됐다"; exit 1; }
+          get() { curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:18080$1" 2>/dev/null || echo 000; }
+          code=""
+          for _ in $(seq 1 60); do   # 60 × 0.5s = 30s 상한
+            if [ "$(docker inspect -f '{{.State.Running}}' "$C" 2>/dev/null)" != "true" ]; then
+              fail "컨테이너가 조기 종료(exit $(docker inspect -f '{{.State.ExitCode}}' "$C" 2>/dev/null || echo '?')) — 인자·루트 경로 확인"
+            fi
+            code=$(get /health)
+            if [ "$code" = "200" ]; then break; fi
+            sleep 0.5
+          done
+          [ "$code" = "200" ] || fail "/health가 30s 내 200을 반환하지 않음(마지막 코드: $code)"
+          # 프로브를 falsifiable하게: 없는 경로가 404여야 위의 200이 '진짜 /health'다(폴백이 모든 걸 200으로 덮지 않는다).
+          nf=$(get /__no_such_path__)
+          [ "$nf" = "404" ] || fail "없는 경로가 404가 아니라 $nf — 폴백이 모든 경로를 덮고 있어 /health 200이 무의미하다"
+          # 루트 문서 — /public에 web/dist가 실제로 들어갔는가(COPY 경로 드리프트).
+          # ★상태코드만으로는 증명되지 않는다: SWS 베이스 이미지는 자체 기본 문서(/public/index.html — "Static Web Server"
+          #   환영 페이지)를 이미 품고 있다. 그래서 Dockerfile의 `COPY --from=build /app/web/dist /public`이 엉뚱한 곳으로
+          #   드리프트해도 / 는 그 기본 문서로 200을 돌려준다(실측: COPY 대상을 /srv로 바꿔도 이 검사가 초록이었다).
+          #   앱 자신의 index.html에서 <title>을 뽑아 '우리 문서인지'까지 확인해야 falsifiable하다(경로를 하드코딩하지
+          #   않는 것과 같은 이유 — 마커도 앱에서 유도한다).
+          idx=$(get /)
+          [ "$idx" = "200" ] || fail "/ 가 200이 아니라 $idx — --root(/public)에 빌드 산출물이 없다"
+          title=$(sed -nE 's|.*<title>(.*)</title>.*|\1|p' /tmp/app/web/index.html | head -n 1)
+          [ -n "$title" ] || { echo "::error::/tmp/app/web/index.html에서 <title>을 못 읽었다 — 마커 추출이 깨졌다면 이 가드도 함께 고쳐라"; exit 1; }
+          curl -sS "http://127.0.0.1:18080/" 2>/dev/null | grep -qF "<title>$title</title>" \
+            || fail "/ 가 200이지만 우리 문서가 아니다(<title>$title</title> 부재) — SWS 기본 문서를 보고 있다 = COPY 경로가 --root(/public)와 어긋났다"
+          echo "✅ site: /health → 200, / → 200(<title>$title</title> 확인), 없는 경로 → 404 (config는 probes 미선언 — 차트 프로브 없음)"
+          docker rm -f "$C" >/dev/null || true
+      - name: 스모크 런 — worker는 sleep 도중 SIGTERM에 제한 시간 내 종료하는가(I-1 계약)
+        if: matrix.archetype == 'worker'
+        run: |
+          C=smoke-worker
+          BOUND=2   # SIGTERM → 종료 상한(초). 정상 경로는 ~0.07s에 끝난다 — 이 여유는 판별력이 아니라 러너 부하 내성용이다.
+          # ★이 가드의 판별력은 worker의 tick 주기에 통째로 기대고 있다: SIGTERM은 sleep '한복판'에 떨어져야 하고,
+          #   중단 불가 sleep 회귀(=I-1 이전)는 남은 주기(≈INTERVAL_MS)를 다 태우고서야 죽는다. 주기가 상한(2s)
+          #   가까이로 낮아지면 회귀조차 상한 안에 끝나 이 스텝은 '절대 실패하지 않는 검사'가 된다 — 아무도 모르게.
+          #   그래서 주기를 소스에서 읽어 하한을 단언한다: 누가 5000을 2000으로 바꾸면 회귀보다 먼저 여기가 죽는다.
+          interval=$(sed -nE 's/^const INTERVAL_MS = ([0-9]+);.*/\1/p' /tmp/app/src/index.ts)
+          [ -n "$interval" ] || { echo "::error::worker src/index.ts에서 INTERVAL_MS를 못 읽었다 — 선언 형태가 바뀌었다면 이 가드의 sed도 함께 고쳐라"; exit 1; }
+          if [ "$interval" -lt 5000 ]; then
+            echo "::error::INTERVAL_MS=${interval}ms — 상한 ${BOUND}s와의 판별 마진이 사라진다(회귀가 상한 안에 끝나 가드가 조용히 초록이 된다). 주기를 낮추려면 이 스텝의 상한·전제를 함께 재설계해라"; exit 1
+          fi
+          fail() { echo "::error::$1"; echo "--- $C logs ---"; docker logs "$C" 2>&1 | tail -n 50 || true; docker rm -f "$C" >/dev/null 2>&1 || true; exit 1; }
+          docker run -d --name "$C" ci-worker >/dev/null || { echo "::error::worker 컨테이너 기동 실패(docker run)"; exit 1; }
+          # worker는 HTTP를 서빙하지 않는다 — 기동 확인은 stdout 로그가 전부다.
+          for _ in $(seq 1 60); do   # 60 × 0.5s = 30s 상한
+            if docker logs "$C" 2>&1 | grep -q '^tick '; then break; fi
+            sleep 0.5
+          done
+          docker logs "$C" 2>&1 | grep -q '^worker started' || fail "기동 로그('worker started') 부재"
+          docker logs "$C" 2>&1 | grep -q '^tick ' || fail "첫 tick 로그가 30s 내 없음 — 루프가 돌지 않는다"
+          # tick 로그가 찍힌 순간 worker는 '이미' sleep 안이다 — 그래서 추가 대기는 불필요할 뿐 아니라 해롭다.
+          # 기다린 만큼 남은 주기가 깎여 회귀(≈interval)와 상한(BOUND)의 간격, 즉 이 가드의 판별 마진이 그대로 줄어든다.
+          # docker stop이 아니라 kill -s TERM인 이유: stop은 10s 뒤 SIGKILL을 얹어 '스스로 끝났는지'를 흐린다.
+          t0=$(date +%s%3N)
+          docker kill -s TERM "$C" >/dev/null || fail "SIGTERM 전송 실패(docker kill) — 컨테이너가 이미 죽었거나 데몬 오류"
+          # timeout + docker wait = 폴링 없는 정확한 상한(폴링 간격이 마진을 갉아먹지 않는다).
+          # 회귀 코드는 여기서 남은 주기(≈$((interval / 1000))s)를 태우다 상한에 걸려 죽는다.
+          rc=$(timeout "$BOUND" docker wait "$C" 2>/dev/null) \
+            || fail "SIGTERM 후 ${BOUND}s 내 미종료 — 중단 불가 sleep 회귀(남은 주기 ≈$((interval / 1000))s를 끝까지 태우는 중). 클러스터에선 유예시간을 태우다 SIGKILL(137)이 된다"
+          ms=$(( $(date +%s%3N) - t0 ))
+          [ "$rc" = "0" ] || fail "종료 코드 $rc(0 기대)"
+          docker logs "$C" 2>&1 | grep -q '^worker stopped' || fail "종료 로그('worker stopped') 부재 — 루프를 정상적으로 빠져나오지 않았다"
+          echo "✅ worker: SIGTERM → ${ms}ms 만에 종료(exit 0, 상한 ${BOUND}s, 주기 ${interval}ms) + 'worker stopped'"
+          docker rm -f "$C" >/dev/null || true
       - name: 타입검사(필수)
         working-directory: /tmp/app
         run: |
@@ -54,6 +204,23 @@ jobs:
           grep -q 'query_timeout' src/db.ts || { echo "::error::db.ts에 client-side query_timeout 부재"; exit 1; }
           grep -q '/readyz' src/index.ts || { echo "::error::readiness(/readyz) 라우트 부재"; exit 1; }
           echo "✅ api 풀러-안전(statement_timeout startup 미전송) + readiness 배선 확인"
+      - name: DX 존재 계약 — fullstack의 통합 dev seam(스크립트 + concurrently)
+        if: matrix.archetype == 'fullstack'
+        working-directory: /tmp/app
+        run: |
+          # `bun run dev`를 CI에서 실제로 기동하지는 않는다 — 장시간 프로세스 둘(서버 :8080 + vite :5173)을
+          # CI에 세우면 포트·HMR 타이밍이 플레이크의 원천이 된다(PRD P-5). 존재 계약만 단언한다:
+          # 스크립트가 있고, 그 스크립트가 부르는 바이너리가 devDep으로 선언되고 실제로 설치돼 있는가.
+          bun -e '
+            import fs from "node:fs";
+            const pkg = JSON.parse(fs.readFileSync("package.json","utf8"));
+            const dev = pkg.scripts?.dev ?? "";
+            if (!dev) { console.error("::error::fullstack에 dev 스크립트 부재(README가 약속한 통합 dev가 없다)"); process.exit(1); }
+            if (!dev.includes("concurrently")) { console.error("::error::dev 스크립트가 concurrently를 경유하지 않는다: " + dev); process.exit(1); }
+            if (!pkg.devDependencies?.concurrently) { console.error("::error::concurrently devDependency 부재 — dev 스크립트가 미설치 바이너리를 부른다"); process.exit(1); }
+          '
+          test -x node_modules/.bin/concurrently || { echo "::error::node_modules/.bin/concurrently 부재 — 선언은 있으나 설치되지 않았다"; exit 1; }
+          echo "✅ fullstack dev seam 존재(scripts.dev → concurrently, devDep 선언 + 설치)"
       - name: .app-config.yml 계약 검증(homelab 스키마 @main, 별도 디렉토리·fail-closed)
         run: |
           curl -fsSL https://raw.githubusercontent.com/ukyi-app/homelab/main/tools/app-config-schema.json -o /tmp/schema.json \
@@ -81,10 +248,64 @@ jobs:
   scaffold-args:
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: bun 버전 정합 — Dockerfile 4곳이 .bun-version(SSOT)과 같은 버전을 가리키는가
+        # bun 버전은 성격이 다른 두 지점에 나타난다: lock을 '재생성'하는 bun(setup-bun)과 --frozen-lockfile로
+        # lock을 '강제'하는 bun(Dockerfile의 oven/bun). 둘이 갈라지면 lock 포맷/해석이 어긋나 첫 GHCR 빌드가 깨진다.
+        # 그래서 setup-bun 쪽 값은 워크플로에 박지 않고 루트 .bun-version 한 곳에서 읽는다(bun-version-file):
+        #   (a) Renovate는 .github/workflows/* 를 push하지 못한다(App 토큰에 workflows:write 부재). 워크플로에
+        #       숫자가 있으면 Renovate는 Dockerfile만 올리고 그 값은 뒤처진 채 남는다 = 이 가드가 PR마다 레드다.
+        #   (b) .bun-version은 Renovate가 쓸 수 있는 경로다 → 루트 renovate.json이 4개 Dockerfile과 '같은 dep'으로
+        #       묶어 한 브랜치로 올린다. 부분 범프가 만들어질 수 없다.
+        # 이 스텝은 버전 일치뿐 아니라 그 배선 자체가 유지되는지도 단언한다 — 누가 워크플로에 버전을 되박으면 여기서 죽는다.
+        run: |
+          test -f .bun-version || { echo "::error::루트 .bun-version 부재 — setup-bun의 bun-version-file이 가리키는 SSOT다"; exit 1; }
+          # .bun-version은 '버전 한 줄'이 계약이다. renovate.json의 customManager 정규식이 이 형식을 전제하므로
+          # 주석·빈 줄이 끼면 Renovate가 dep을 0개로 보고 조용히 갱신을 멈춘다 — 형식부터 못 박는다.
+          v_lines=$(grep -cE '^[0-9][^[:space:]#]*$' .bun-version || true)
+          if [ "$v_lines" -ne 1 ] || [ "$(wc -l < .bun-version | tr -d ' ')" -ne 1 ]; then
+            echo "::error::.bun-version은 버전 문자열 한 줄이어야 한다(주석·빈 줄·digest 금지) — renovate.json customManager의 정규식 전제다"; exit 1
+          fi
+          # 배선 단언: 모든 setup-bun이 .bun-version을 읽고, 워크플로엔 하드코딩된 버전이 하나도 없어야 한다.
+          # ★세 패턴 모두 '줄머리 앵커'다 — 이 가드의 소스 줄 자신이 같은 문자열(oven-sh/setup-bun@, bun-version:)을
+          #   품고 있어서, 앵커 없이 grep하면 자기 자신을 세어 오탐한다(실측: n_setup이 2가 아니라 3이 나왔다).
+          #   앵커를 걸면 `n_setup=$(grep …` 로 시작하는 줄은 uses:/bun-version: 형태가 아니라 매칭되지 않는다.
+          n_setup=$(grep -cE '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*oven-sh/setup-bun@' .github/workflows/template-ci.yaml || true)
+          n_file=$(grep -cE '^[[:space:]]*bun-version-file:[[:space:]]*\.bun-version[[:space:]]*$' .github/workflows/template-ci.yaml || true)
+          if [ "$n_setup" -lt 1 ] || [ "$n_setup" -ne "$n_file" ]; then
+            echo "::error::setup-bun ${n_setup}곳 중 ${n_file}곳만 bun-version-file(.bun-version)을 쓴다 — 나머지는 SSOT 밖에서 bun을 고른다"; exit 1
+          fi
+          if grep -qE '^[[:space:]]*bun-version:' .github/workflows/template-ci.yaml; then
+            echo "::error::워크플로에 bun-version이 하드코딩됐다 — Renovate가 .github/workflows/*를 push하지 못해 그 값만 뒤처진다. .bun-version을 써라"; exit 1
+          fi
+          # 추출 지점이 실제로 다 잡히는지부터 확인한다 — glob이 빈손이면 '아무것도 비교하지 않는 초록'이 된다.
+          shopt -s nullglob
+          dfs=(scaffold/archetypes/*/Dockerfile)
+          if [ "${#dfs[@]}" -lt 4 ]; then
+            echo "::error::scaffold/archetypes/*/Dockerfile을 ${#dfs[@]}개만 찾았다(4개 이상 기대) — 경로가 바뀌었다면 이 가드도 함께 고쳐라"; exit 1
+          fi
+          # Dockerfile 태그엔 digest(@sha256:...)가 붙을 수 있다(renovate pinDigests) — 태그 부분만 뽑는다.
+          # .bun-version엔 digest가 붙지 않는다(renovate.json이 그 파일만 pinDigests=false로 뺀다 — 그쪽 주석 참조).
+          pins=$(
+            { sed -nE 's|^FROM oven/bun:([^[:space:]@]+).*|\1|p' "${dfs[@]}"
+              sed -nE 's|^([0-9][^[:space:]#]*)$|\1|p' .bun-version
+            }
+          )
+          printf '%s\n' "$pins" | sed 's/^/  bun pin: /'
+          n=$(printf '%s\n' "$pins" | grep -c . || true)
+          # 개수를 못 박는다 — FROM 형식이 바뀌면 sed가 조용히 그 지점을 놓치고 '남은 것끼리는 일치'하며 초록이 된다.
+          want=$(( ${#dfs[@]} + 1 ))
+          if [ "$n" -ne "$want" ]; then
+            echo "::error::bun 핀 추출이 ${want}곳(Dockerfile ${#dfs[@]} + .bun-version 1)이 아니라 ${n}곳 — FROM 형식을 바꿨다면 이 가드의 sed도 함께 고쳐라"; exit 1
+          fi
+          if [ "$(printf '%s\n' "$pins" | sort -u | wc -l | tr -d ' ')" -ne 1 ]; then
+            echo "::error::bun 버전 불일치 — lock 재생성 bun(.bun-version) ≠ frozen-lockfile 빌드 bun(oven/bun)이 된다(부분 범프)"; exit 1
+          fi
+          echo "✅ bun 정합: ${n}곳(Dockerfile ${#dfs[@]} + .bun-version) 모두 $(printf '%s\n' "$pins" | sort -u)"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.3.14
+          # 숫자를 여기 박지 않는다 — 위 가드가 이 배선(.bun-version 단일 SSOT)을 강제한다.
+          bun-version-file: .bun-version
       - run: bun install
       - name: strict-parse 네거티브 — 오타 flag·불량 name 거부
         run: |

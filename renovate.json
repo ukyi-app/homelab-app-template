@@ -4,5 +4,67 @@
   "timezone": "Asia/Seoul",
   "schedule": ["* 0-6 * * 1"],
   "pinDigests": true,
-  "automerge": false
+  "automerge": false,
+  "bun-version": {
+    "description": [
+      "Renovate 내장 bun-version 매니저(.bun-version을 읽어 depName=Bun · packageName=bun · datasource=npm으로 잡는다)를 끈다.",
+      "끄지 않으면 같은 .bun-version 한 줄이 '두 dep'이 된다 — 내장 매니저의 Bun(npm)과 아래 customManager의 oven/bun(docker).",
+      "그러면 renovate/bun-1.x 브랜치가 하나 더 갈라져 .bun-version만 올리고 Dockerfile 4곳은 그대로 둔다 → 정합 가드 레드.",
+      "(실측: 내장 매니저를 켠 채로 드라이런하면 renovate/bun 과 renovate/bun-1.x 두 브랜치가 나온다.)",
+      "★단순히 '중복이라서' 끄는 게 아니다 — datasource를 docker 하나로 통일하는 게 핵심이다. 내장 매니저는 npm(bun 패키지),",
+      "  Dockerfile은 docker(oven/bun 이미지 태그)로 버전을 각각 해석하므로, 둘을 한 그룹에 넣어도 해석 시점이 어긋나면",
+      "  (npm 릴리스가 이미지 push보다 앞서는 창) 한 PR 안에서 값이 갈릴 수 있다. customManager로 .bun-version까지",
+      "  oven/bun · docker로 잡으면 5곳이 '한 dep'이 되어 버전 해석이 한 번만 일어난다 — 부분 범프가 구조적으로 불가능해진다."
+    ],
+    "enabled": false
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": [
+        "루트 .bun-version = bun 버전의 SSOT. 이 파일을 보는 곳은 둘이다: template-ci의 setup-bun(bun-version-file)과 정합 가드.",
+        "나머지 4곳(아키타입 Dockerfile의 `FROM oven/bun:X`)은 docker 매니저가 이미 본다.",
+        "depName/datasource를 Dockerfile 쪽과 '똑같이'(oven/bun · docker) 맞추는 게 핵심이다 — 그래야 Renovate에게 5곳이",
+        "한 dep으로 보여 버전 해석이 한 번만 일어나고, 아래 groupName이 한 브랜치로 묶는다(위 bun-version 주석 참조).",
+        "★왜 버전을 워크플로에서 빼냈나(이 배선의 존재 이유):",
+        "  (a) homelab Renovate App 토큰엔 workflows:write가 없다 → .github/workflows/* 를 건드리는 push는 거부된다.",
+        "      워크플로에 `bun-version: X`를 박아두면, 그 지점을 그룹에 넣는 순간 PR 전체가 push에 실패해 bun 범프 PR이",
+        "      아예 안 열리고, 그룹에서 빼면 CI 값만 영원히 뒤처져 정합 가드가 PR마다 레드가 된다. 어느 쪽도 출구가 아니다.",
+        "  (b) github-actions 매니저는 setup-bun의 `bun-version:` 입력을 이미 파싱한다(depName=bun · datasource=npm — 실측).",
+        "      그래서 그 키가 워크플로에 남아 있으면 중복 dep이 되어 renovate/bun-1.x 브랜치가 하나 더 갈라진다.",
+        "      bun-version-file로 바꾸면 그 dep 자체가 사라진다(워크플로에 버전 문자열이 없으므로 skipReason=unspecified-version).",
+        "값 정규식이 앵커(^…$)로 파일 전체를 잡는 이유: .bun-version은 '버전 한 줄'이 계약이다(주석·여분 줄 금지).",
+        "형식이 깨지면 dep이 0개가 되어 조용히 갱신이 멈추므로, template-ci의 정합 가드가 그 한 줄 형식을 단언한다."
+      ],
+      "managerFilePatterns": ["/^\\.bun-version$/"],
+      "matchStrings": ["^(?<currentValue>\\d[^\\s#]*)\\s*$"],
+      "depNameTemplate": "oven/bun",
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": [
+        "bun을 올리는 5곳(Dockerfile 4 + .bun-version)을 한 PR로 묶는다 — 부분 범프는 곧 template-ci의 bun 정합 가드",
+        "레드이므로, 애초에 갈라진 브랜치가 만들어지지 않게 한다. 다섯 지점 모두 Renovate가 push 가능한 경로다",
+        "(.github/workflows/* 는 이 그룹에 없다 — 그래서 이 PR은 workflows:write 없이도 그대로 push된다)."
+      ],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["oven/bun"],
+      "groupName": "bun"
+    },
+    {
+      "description": [
+        ".bun-version의 내용은 이미지 참조가 아니라 순수 버전 문자열이다 — setup-bun이 파일 내용을 그대로 버전으로 읽는다.",
+        "최상위 pinDigests=true가 여기까지 적용되면 파일에 `1.3.15@sha256:...`이 쓰여 setup-bun의 버전 해석이 깨진다.",
+        "그래서 '이 파일에서만' digest 핀을 끈다. 좁히는 축이 matchFileNames인 이유: 같은 dep(oven/bun · docker)이라도",
+        "Dockerfile의 FROM은 digest를 그대로 받아야 하므로, dep·datasource·매니저로 좁히면 Dockerfile 쪽까지 함께 꺼진다.",
+        "Dockerfile에 digest가 붙어도 정합 가드는 태그 부분만 비교하므로 레드가 되지 않는다(실측 확인)."
+      ],
+      "matchFileNames": [".bun-version"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["oven/bun"],
+      "pinDigests": false
+    }
+  ]
 }
