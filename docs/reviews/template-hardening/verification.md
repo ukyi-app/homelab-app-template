@@ -280,6 +280,54 @@ AFTER:   tick failed (code=X1): Error: boom
 ```
 **PASS** — `SENTINEL_pw_9z` 부재, `code=X1`·message 보존, 예외 반복에도 프로세스 생존.
 
+## 11. release 게이트 r2 수정의 검증 (R-5 / R-6)
+
+r2 게이트는 r1 수정 중 **두 건이 새 결함을 만들었음**을 잡았다. 둘 다 정확했다.
+
+### R-5 — 사용자 파일 보호 가드에 우회가 있었다 (high)
+게이트 지적: R-2 가드가 **ignore된 untracked 파일을 전부 "템플릿이 실은 것"으로 분류**해 삭제 가능
+집합에 넣었다. 이 레포는 `*.local`·`.env`·`.env.*`를 ignore하므로, 사용자가 손으로 쓴
+`docs/notes.local`·`docs/.env`가 preflight를 통과한 뒤 `docs/`와 함께 조용히 삭제됐다.
+r1의 증거는 **ignore되지 않은** `docs/my-notes.md`만 테스트해 이 우회를 통째로 놓쳤다.
+
+| 케이스 | BEFORE (r1 수정본) | AFTER |
+|---|---|---|
+| `docs/notes.local` (ignored) | **exit 0 — 파일 소멸, 경고 없음** | **exit 2**, 파일 생존, 전개 흔적 0 |
+| `docs/.env` (ignored) | **exit 0 — 파일 소멸** | **exit 2**, 파일 생존 |
+| `docs/my-notes.md` (비-ignore) | exit 2 | exit 2 (약화되지 않음) |
+| `docs/.DS_Store` 단독 | — | exit 0 (막지 않음) |
+| `.DS_Store` + `notes.local` | — | **exit 2**, 메시지는 `notes.local`만 지목 |
+| 정상 경로(템플릿 docs만) | — | exit 0 |
+
+**PASS** — ignore 상태를 소유권의 대리물로 쓰지 않는다. 최초 커밋 트리에 없으면 무조건 사용자
+소유이고, 예외는 basename 정확 일치 화이트리스트(`.DS_Store`, `Thumbs.db`)뿐이다.
+부수 발견: 이 레포 `.gitignore`엔 `.DS_Store`가 없어서, 기존 "편의"는 **사용자의 전역 gitignore
+설정에 의존**하고 있었다 — 설정이 없으면 오히려 스캐폴드를 막았다. basename 화이트리스트는
+사용자 git 설정과 무관하게 결정적이다.
+
+### R-6 — sanitizer가 nullish throw에서 프로세스를 죽였다 (medium)
+게이트 지적: worker의 catch가 타입 단언 후 곧바로 구조분해해, `throw null`·`throw undefined`·
+빈 `Promise.reject()`에서 **catch 안에서 다시 throw**하며 프로세스가 죽었다 — **예외 격리를 하려고
+넣은 try/catch가 오히려 죽이는** 상황(I-1이 막으려던 바로 그것).
+
+실 컨테이너(distroless) 6초 관찰:
+
+| throw 형태 | BEFORE | AFTER |
+|---|---|---|
+| `throw null` | **Running=false, exit 1** (`TypeError: Cannot destructure...`) | Running=true, `tick failed (code=none): null` ×7 |
+| `throw undefined` | **Running=false, exit 1** | Running=true, `tick failed (code=none): undefined` ×7 |
+| `await Promise.reject()` | **Running=false, exit 1** | Running=true, 동일 |
+| `throw "just a string"` | Running=true | Running=true, `tick failed (code=none): just a string` |
+| Error + sentinel 크리덴셜 | Running=true, 미유출 | Running=true, `tick failed (code=X1): Error: boom`, **SENTINEL_pw 미유출** |
+
+**PASS** — 5개 형태 중 **BEFORE에서 3개가 컨테이너를 죽였다**. AFTER는 전부 생존하고 1s 백오프로
+재시도하며(6초에 7줄), 객체는 절대 펼치지 않아 크리덴셜이 새지 않는다(`db.ts`와 동일 규율).
+
+### 실제 CI 재실행 (R-5/R-6 수정 반영)
+**Run**: https://github.com/ukyi-app/homelab-app-template/actions/runs/29197329127
+**SHA**: `6a801be` · 5개 잡 전부 **pass**
+(scaffold-build fullstack/api/site/worker + scaffold-args)
+
 ---
 
 ## 검증하지 못한 것 (정직한 공백)
@@ -289,4 +337,6 @@ AFTER:   tick failed (code=X1): Error: boom
 - **Renovate 실제 PR 생성**: dry-run으로 브랜치/파일 집합을 확인했으나, 실제 GitHub에서의 토큰
   권한·PR 생성은 F-1(레포 등록) 이후에만 관측 가능하다.
 - **사용자 파일 보호 가드는 git 저장소에서만 동작**한다(귀속 기준이 최초 커밋 트리이므로). ZIP으로
-  받아 쓰는 경로는 여전히 구멍이며, 템플릿 문서를 같은 경로에서 **수정만** 한 경우도 구분되지 않는다.
+  받아 쓰는 경로와 `rm -rf .git` 사본(template-ci가 쓰는 경로)은 여전히 구멍이며, 템플릿 문서를
+  같은 경로에서 **수정만** 한 경우도 구분되지 않는다. 이 사실은 코드 주석에만 있고 사용자에게
+  보이는 경고는 없다.
