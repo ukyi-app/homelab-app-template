@@ -368,6 +368,44 @@ P-6 구조 가드도 유지(리스너 등록을 `createPool`로 옮기면 이제
 **Run**: https://github.com/ukyi-app/homelab-app-template/actions/runs/29200462009
 **SHA**: `60e0ec9` · 5개 잡 전부 **pass**
 
+## 13. release 게이트 r4 → 접근법 전환 (R-8)
+
+r4 게이트: **함수형 값이 비-확장 sanitizer를 우회한다.** 원시값 분기가 함수를 포함하므로
+(`typeof fn === "function"`), `client.password`를 달고 **던지지 않는** `Symbol.toPrimitive`를 가진
+callable이 `String(e)`를 타고 **그 비밀번호를 로그에 실었다**. 이는 **R-7 수정이 만든 회귀**다 —
+크래시를 막으려 넣은 폴백이 유출을 열었다.
+
+### 사람의 판단: 코드가 아니라 접근법이 틀렸다
+게이트가 **네 라운드 연속 같은 결함 클래스**를 한 겹씩 벗겨냈다(R-4 객체 덤프 → R-6 nullish →
+R-7 던지는 accessor → R-8 callable 우회). 매 수정이 "방금 증명된 위험"만 막는 **블록리스트**였고,
+매번 다음 구멍이 열렸다. 그래서 포매터를 **allowlist-only로 재설계**했다.
+
+- 허용 필드(`code`/`message`/`stack`)를 가드된 읽기로 읽되 **`typeof`가 `string`일 때만** 채택
+- 값 자체는 **진짜 원시값**(string/number/boolean/bigint)일 때만 — 그 외에는 값이 아니라 **타입 이름**
+- `String()`·`toString`·`Symbol.toPrimitive`·`unknown` 보간이 **코드에 하나도 없다**
+
+남의 코드가 실행될 통로 셋(콘솔의 객체 펼침 / 강제 변환 훅 / 프로퍼티 읽기)이 전부 닫혔다.
+
+### 적대적 배터리 16종 (worker=실 컨테이너, db=bun test) — BEFORE 13/16 → AFTER **16/16**
+
+| 케이스 | BEFORE | AFTER |
+|---|---|---|
+| callable + password + non-throwing `Symbol.toPrimitive` (R-8 repro) | **훅 실행됨** — `harmless-looking` 로깅 | `(...: function)`, 훅 실행 **false** |
+| 〃, 훅이 password를 반환 | **`leaked:SENTINEL_pw` 평문 유출** | `(...: function)`, grep 0 |
+| callable + password + non-throwing `toString` | **`leaked:SENTINEL_pw` 유출** | `(...: function)`, grep 0 |
+| 해지된 **함수** Proxy | `String()`이 던져 최후 catch로 떨어짐 | `(...: function)` — **아무것도 던지지 않음** |
+| Error+password / 던지는 getter / 해지 Proxy / null / undefined / reject / 문자열 / Symbol / BigInt / null-proto | 기존대로 | 전부 생존, 문자열 throw는 문자열 그대로 |
+
+**PASS** — AFTER 전 케이스에서 **훅 실행 0회**(결과를 검사하는 게 아니라 **호출 자체를 플래그로 금지**),
+`SENTINEL` grep 0건, `console.error` 인자 타입 100% `string`, Running=true, 1s 백오프 지속.
+
+api 테스트 **14 → 16**: 콜러블 센티넬 케이스 + **12행 타입 표**(모양이 아니라 규율을 고정 — 콜러블
+하나만 테스트하면 그것도 결국 점-테스트라 클래스 회귀를 못 막는다).
+
+### 실제 CI 재실행
+**Run**: https://github.com/ukyi-app/homelab-app-template/actions/runs/29201410004
+**SHA**: `5322d06` · 5개 잡 전부 **pass** (api 이미지 게이트 안에서 16 pass 확인)
+
 ---
 
 ## 검증하지 못한 것 (정직한 공백)
@@ -380,3 +418,11 @@ P-6 구조 가드도 유지(리스너 등록을 `createPool`로 옮기면 이제
   받아 쓰는 경로와 `rm -rf .git` 사본(template-ci가 쓰는 경로)은 여전히 구멍이며, 템플릿 문서를
   같은 경로에서 **수정만** 한 경우도 구분되지 않는다. 이 사실은 코드 주석에만 있고 사용자에게
   보이는 경고는 없다.
+- **에러 포매터의 잔여 위험**(allowlist-only 재설계 후에도):
+  ① `message`/`stack`이 **문자열이면 그대로 찍는다** — 앱이 스스로 비밀을 message에 넣으면 나간다
+  (포매터가 아니라 정책 문제). ② getter의 **부작용**(네트워크·파일)은 여전히 실행된다 — 던지는 것은
+  잡지만 부작용은 못 막는다(완전 차단은 Proxy 트랩 때문에 불가능하면서 진단만 잃는 교환이라 하지 않음).
+  ③ 규율을 **타입체커가 강제하지 못한다** — 포크한 사람이 `String()`을 다시 넣으면 클래스가 다시
+  열린다. 유일한 방어선은 api의 타입-표 테스트(SENTINEL grep)이다.
+  ④ **worker에는 테스트가 없다**(테스트 표면이 없어 의도적) — worker 포매터의 드리프트를 CI가 잡을
+  수단이 현재 없다. api의 같은 코드가 간접 증명할 뿐이다.
