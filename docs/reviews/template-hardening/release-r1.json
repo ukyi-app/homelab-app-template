@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "release",
+  "verdict": "needs-attention",
+  "summary": "codex-run-failed: Verify with `/codex:setup` and `--selftest`. The review target must be a git repo with the reviewed content present. The required release-review engine could not write its job log because the environment is read-only, so no trustworthy code-review verdict was produced.",
+  "planFile": "docs/prds/template-hardening.md",
+  "planInDiff": null,
+  "reviewedFileCount": 31,
+  "target": "branch diff against main",
+  "reviewedSha": "ad11a222c9d715aeb48ba9a484571f96d17e5064",
+  "reviewedTree": "11efbacf7f9ba4e0123d8c37dee92abe074d0233",
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 0,
+  "planFindingCount": 0,
+  "findings": [],
+  "next_steps": [
+    "Rerun the release review in an environment that permits writing the Codex plugin job log and `docs/reviews/template-hardening/release-r1.json`."
+  ]
+}
