@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // 대화형 스캐폴더 — 아키타입(fullstack/api/site/worker)을 선택해 즉시 배포 가능한 앱을 생성한다.
-// pnpm create vite 류 UX. 실행 후 자기 자신을 삭제한다(앱 레포에 스캐폴드 머신러리 미잔존).
+// pnpm create vite 류 UX. 실행 후 자기 자신을 삭제한다(앱 레포에 템플릿 전용 머신러리·문서 미잔존).
 import { intro, outro, select, text, confirm, isCancel, cancel } from "@clack/prompts";
 import { stringify as toYaml } from "yaml";
 import { cpSync, rmSync, existsSync, writeFileSync, readFileSync, readdirSync, realpathSync } from "node:fs";
@@ -240,6 +240,31 @@ const runs = readFileSync(join(ARCH_DIR, "Dockerfile"), "utf8").replace(/\\\r?\n
   .flatMap((l) => l.replace(/\s+#.*$/, "").match(/^\s*RUN\s+(.+)$/)?.[1].split("&&") ?? []) // RUN 줄만 → `&&` 체인 분해
   .flatMap((c) => c.trim().match(/^bun run ([\w:-]+)/)?.[1] ?? []); // bun run이 아닌 조각(bun install 등)은 게이트가 아니다
 if (runs.join(" → ") !== doc.gates.join(" → ")) die(`DOC[${archetype}].gates(${doc.gates.join(" → ") || "없음"}) ≠ archetypes/${archetype}/Dockerfile의 게이트(${runs.join(" → ") || "없음"})`);
+// --- 자가삭제 목록 — 스캐폴드 마지막에 ROOT에서 지워질 템플릿 전용 경로. 삭제 블록과 바로 아래 가드의 단일 출처다.
+//     앱 레포가 남의 레포 서류(이 템플릿의 PRD·이슈·리뷰 게이트 아티팩트)와 템플릿 전용 머신러리를 상속하면
+//     히스토리·검색·에이전트 컨텍스트가 전부 오염된다. 경로별 이유:
+//   scaffold/ — 스캐폴더 자신. 앱에서 두 번 돌 일이 없다.
+//   .github/workflows/template-ci.yaml — 템플릿 자신을 검사하는 CI. 앱엔 그 검사 대상(스캐폴더·드리프트 가드)이 없다.
+//   .bun-version — 템플릿 레포에만 있을 이유가 있다: Renovate가 bun을 올릴 수 있는 '쓰기 가능한' 파일이고
+//     (App 토큰에 workflows:write가 없어 워크플로엔 버전을 못 박는다) 그걸 읽는 건 템플릿 CI(setup-bun의
+//     bun-version-file)뿐이다. 앱엔 그 독자가 없다 — Dockerfile이 `FROM oven/bun:X`로 스스로 핀하고
+//     release.yaml은 homelab 재사용 워크플로를 부를 뿐 setup-bun을 쓰지 않는다. 그런데 Renovate엔 .bun-version을
+//     읽는 내장 bun-version 매니저가 있어, 남겨두면 앱 레포마다 아무도 읽지 않는 파일을 올리는 renovate/bun-1.x
+//     PR이 영구히 열린다 — 죽은 파일을 실어 보내고 그걸 알아챈 봇을 앱 renovate.json에서 입막음하는 건 해법이 아니다.
+//   docs/ — 하위를 열거하지 않고 통째로 지운다(열거였다면 나중에 추가되는 docs/*가 조용히 앱으로 샌다 = I-8 회귀).
+//     ADR-0001(Dockerfile 게이트)의 결론(관문은 이미지 빌드 안, 우회 경로 없음)과 ADR-0002(앱 식별자=레포명)의
+//     규칙은 앱 README가 그 앱의 '실제' 게이트 목록·산출물(package.json name, secret:seal --app, sealed.yaml)과
+//     함께 이미 말한다. ADR에 더 있는 건 기각안뿐 — 템플릿 저자의 선택이지 앱 개발자가 뒤집을 결정이 아니다.
+//     덤으로 앱이 자기 ADR을 쓸 때 docs/adr/0001을 템플릿의 0001이 선점하는 충돌도 사라진다.
+//   CONTEXT.md — 첫 줄부터 '템플릿 레포'의 용어집이다. 스캐폴드·드리프트 가드·template-ci처럼 앱에 없는 것들을 정의한다.
+const SELF_DELETE = ["scaffold", ".github/workflows/template-ci.yaml", ".bun-version", "docs", "CONTEXT.md"] as const;
+
+// 통째 삭제는 반대편 함정을 판다: 템플릿이 위 경로 중 하나에 파일을 두면 그 사본이 ROOT의 같은 경로로 전개됐다가
+// 마지막 삭제에 함께 쓸려 exit 0·무경고로 사라진다. 그래서 가드를 삭제 목록에서 직접 유도한다 — 목록을 두 벌로
+// 적으면 삭제 경로가 늘 때 가드만 낡아 함정이 조용히 다시 열린다(같은 지식의 사본은 반드시 어긋난다).
+for (const src of ["common", `archetypes/${archetype}`]) for (const p of SELF_DELETE) {
+  if (existsSync(join(SCAFFOLD, src, p))) die(`scaffold/${src}/${p} 이(가) 있다 — 전개되면 ROOT/${p}이 되지만 그 경로는 스캐폴드 마지막에 통째로 지워진다(템플릿 전용 경로). 앱에 도달할 수 없다(조용히 사라진다) — 앱에 줄 내용은 앱이 실제로 갖고 가는 파일에 넣어라(앱 문서는 scaffold/common/README.app.md).`);
+}
 
 // --- 전개 ---
 cpSync(join(SCAFFOLD, "common"), ROOT, { recursive: true });
@@ -301,16 +326,10 @@ rmSync(join(ROOT, "package.partial.json"));
 const inst = Bun.spawnSync(["bun", "install"], { cwd: ROOT, stdout: "inherit", stderr: "inherit" });
 if (inst.exitCode !== 0) { console.error("❌ bun install(lock 재생성) 실패 — 새로 생긴 루트 엔트리만 제거했다. 제자리 수정(package.json·README.md·.gitignore·renovate.json, 경우에 따라 bun.lock)과 .github/workflows/release.yaml은 남아 있고, package.json 재작성으로 scripts.scaffold가 지워져 `bun run scaffold`는 더 이상 없다 — `git checkout . && git clean -fd`로 트리를 되돌려야 재실행할 수 있다(.git 없는 사본이면 템플릿 사본을 다시 뜰 것)"); rollback(); process.exit(1); }
 
-// --- 템플릿 전용 머신러리 제거 (lock 재생성 성공 後에만 — 이 앞에서 지우면 롤백이 되돌리지 못하는
-//     '지워진 원본'이 생겨 위 롤백 주석·실패 메시지가 거짓이 된다. 롤백은 '새로 생긴' 엔트리만 지운다). ---
-rmSync(SCAFFOLD, { recursive: true, force: true });
-rmSync(join(ROOT, ".github/workflows/template-ci.yaml"), { force: true });
-// .bun-version은 템플릿 레포에만 있을 이유가 있다: Renovate가 bun을 올릴 수 있는 '쓰기 가능한' 파일이고
-// (App 토큰에 workflows:write가 없어 워크플로엔 버전을 못 박는다) 그걸 읽는 건 템플릿 CI(setup-bun의
-// bun-version-file)뿐이다. 앱엔 그 독자가 없다 — Dockerfile이 `FROM oven/bun:X`로 스스로 핀하고
-// release.yaml은 homelab 재사용 워크플로를 부를 뿐 setup-bun을 쓰지 않는다. 그런데 Renovate엔 .bun-version을
-// 읽는 내장 bun-version 매니저가 있어, 남겨두면 앱 레포마다 아무도 읽지 않는 파일을 올리는 renovate/bun-1.x
-// PR이 영구히 열린다 — 죽은 파일을 실어 보내고 그걸 알아챈 봇을 앱 renovate.json에서 입막음하는 건 해법이 아니다.
-rmSync(join(ROOT, ".bun-version"), { force: true });
+// --- 템플릿 전용 머신러리·문서 제거 (SELF_DELETE 단일 출처 — 경로별 이유는 그 정의에, 전개 前 가드도 거기서 유도된다).
+//     lock 재생성 성공 後에만 — 이 앞에서 지우면 롤백이 되돌리지 못하는 '지워진 원본'이 생겨 위 롤백 주석·실패
+//     메시지가 거짓이 된다(롤백은 '새로 생긴' 엔트리만 지운다). 이 삭제는 그 순서 제약에 묶인 한 덩어리다 —
+//     install 앞으로 옮기면 안 된다. ---
+for (const p of SELF_DELETE) rmSync(join(ROOT, p), { recursive: true, force: true });
 
 outro(`✅ ${name} (${archetype}/${kind}) 스캐폴드 완료 — git add -A && git commit && git push → owner가 homelab create-app 디스패치`);

@@ -43,7 +43,11 @@ jobs:
           cp -r . /tmp/app && cd /tmp/app && rm -rf .git
           bun install
           bun run scaffold --archetype "$ARCHETYPE" --name "ci-$ARCHETYPE" --yes
-          test ! -d scaffold && test ! -f .github/workflows/template-ci.yaml
+          # 자가삭제 단언 — 지우는 대상 '전부'를 여기 열거한다. 하나가 남아도 빌드·스모크·스키마 검증은 전부
+          # 초록이라(앱은 멀쩡히 돈다) 이 줄이 유일한 관측점이고, 놓치면 앱 레포마다 템플릿 서류가 영구히 상속된다.
+          test ! -d scaffold && test ! -f .github/workflows/template-ci.yaml \
+            && test ! -d docs && test ! -f CONTEXT.md && test ! -f .bun-version \
+            || { echo "::error::자가삭제 누락 — 템플릿 전용 파일이 앱에 남았다: $(ls -d scaffold .github/workflows/template-ci.yaml docs CONTEXT.md .bun-version 2>/dev/null | tr '\n' ' ')"; exit 1; }
         env:
           ARCHETYPE: ${{ matrix.archetype }}
       - name: docker build(frozen-lockfile — 첫 검증, lock 변형 前)
