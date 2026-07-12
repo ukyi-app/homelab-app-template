@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import type { Pool } from "pg";
-import { createRuntimePool } from "./db";
+import { createRuntimePool, preparePool } from "./db";
 
-// env가 만든 풀도 테스트가 주입한 풀도 이 파라미터 한 지점으로 수렴한다 — 풀 준비 로직을
-// 여기에 두면 주입이 프로덕션 경로를 우회할 수 없다. DB가 설정되지 않은 앱이면 풀이 null이고
-// readiness가 정적으로 통과한다.
+// env가 만든 풀도 테스트가 주입한 풀도 이 파라미터 한 지점으로 수렴한다 — 주입이 프로덕션의 풀 준비를
+// 우회할 수 없다. DB가 설정되지 않은 앱이면 풀이 null이고 readiness가 정적으로 통과한다.
 export function createApp(db: Pool | null = createRuntimePool()): Hono {
+  preparePool(db);
   const app = new Hono();
 
   // 런타임 계약(homelab 차트 probes: liveness=/healthz, readiness=/readyz)

@@ -37,3 +37,17 @@ export function createRuntimePool(): Pool | null {
   const url = runtimeUrl();
   return url ? createPool(url) : null;
 }
+
+// 풀 준비 — 풀을 쓰기 전 반드시 통과하는 한 지점. 등록이 곧 계약이라 반환값이 없다.
+// ★error 리스너는 여기에만 둔다. 풀러 재시작·cnpg 페일오버·네트워크 파티션은 유휴 커넥션의 'error'로
+//   올라오는데, 리스너가 없으면 그 순단이 로그 한 줄 없이 사라진다(pg 계약상 unhandled 'error'는 throw이나
+//   현재 Bun은 이 throw를 삼킨다 — 미명세 동작이라 베이스 이미지가 올라가면 죽을 수도 있다).
+// ★code를 함께 찍는다 — 풀러 축출(57P01)인지 TCP 리셋(ECONNRESET)인지가 진단을 가른다. 단 에러 객체를
+//   그대로 넘기면 안 된다: pg가 err에 Client를 매달아 두어 DB password가 평문으로 로그에 찍힌다.
+//   삼키되 죽지 않는다 — liveness는 정적, 순단은 다음 readiness 왕복에서 503 → 재연결로 수렴한다.
+export function preparePool(pool: Pool | null): void {
+  pool?.on("error", (e) => {
+    const { code, stack, message } = e as Error & { code?: string };
+    console.error(`pg pool error (code=${code ?? "none"}): ${stack ?? message}`);
+  });
+}
