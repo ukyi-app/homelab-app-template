@@ -250,5 +250,7 @@ I-3의 실제 가치는 (a) **pg 계약 준수** — unhandled pool error가 던
 | ID | Item | Source | Issue |
 |----|------|--------|-------|
 | F-1 | homelab Renovate 레포 등록 배선(RENOVATE_REPOSITORIES에 신규 앱 추가 또는 allowlist autodiscover 전환) — 담당: 오너, 위치: homelab 레포, 시점: 다음 신규 앱 생성 전, 수용 기준: Renovate 런 로그에 앱 레포 스캔 | P-3 (accepted, scope 축소) | done 단계에서 파일 |
+| F-5 | 스캐폴드된 앱에 **PR CI가 없다**(release.yaml은 `push: main` 전용) — Renovate PR이 시그널 0인 채로 사람 앞에 오고, Dockerfile 게이트는 머지 **후에야** 발화한다. `common/`에 PR 트리거 워크플로(최소 docker build)를 넣을지 판단 | I-6 code-review | 별도 이슈 |
+| F-4 | 템플릿 **루트** `renovate.json`도 앱 설정과 같은 결함을 안고 있다: (a) `rangeStrategy`/`lockFileMaintenance` 부재로 자기 자신의 캐럿 범위 의존이 정체, (b) `github-actions`가 켜져 있으나 App 토큰에 `workflows:write`가 없어 워크플로 PR이 매주 거부됨, (c) I-7의 bun 정합 가드를 위해 `customManagers`(setup-bun 입력값)가 필요 — (c)는 I-7이 처리, (a)(b)는 별도 | I-6 code-review | 별도 이슈 |
 | F-3 | Bun이 pg pool의 unhandled `error` throw를 **무음으로 삼키는** 동작(소켓 콜백 경로) — pg/Node 계약 위반으로 보이며 업스트림(Bun) 리포트 가치가 있다. 또한 Bun 인스펙터가 에러 객체 로깅 시 pg `Client`를 덤프해 **DB 비밀번호를 평문 노출**한다(실 Postgres 재현). 두 건 모두 이 레포에서는 방어됐으나(리스너 + 구조분해 로깅 + 회귀 테스트) 다른 앱·다른 라이브러리에서 재발 가능 | I-3 실행 중 발견 | 업스트림 리포트 |
 | F-2 | api의 DB URL 자동 발견 **우선순위** 결정: 현재 코드는 generic `DATABASE_URL`이 플랫폼이 주입한 `<APP>_DATABASE_URL`보다 **우선**하는데, db.ts 주석과 I-2 수용 기준은 "generic **fallback**"이라고 부른다. I-2에서 동작은 그대로 두고 문구만 정직화했다(우선순위 변경은 behavior flip이라 I-2 범위 밖). 로컬 `.env`의 잔여 `DATABASE_URL`이 프로덕션 주입값을 덮는 footgun 가능성 — 유지/반전을 사람이 결정 | I-2 code-review (spec axis) | 별도 판단 |
