@@ -38,29 +38,41 @@ export function createRuntimePool(): Pool | null {
   return url ? createPool(url) : null;
 }
 
-// 풀 error에서 로그 한 줄을 만든다 — ★이 함수는 무슨 일이 있어도 던지지 않는다.
-// ★에러 객체를 콘솔에 그대로 넘기지 않는다 — 콘솔이 객체를 펼치면 pg가 err에 매달아 둔 Client까지 찍혀
-//   DB password가 평문으로 흐른다(실측). 그래서 허용 필드(code·stack·message)만, 그것도 문자열일 때만
-//   읽는다 — 객체를 절대 펼치지 않으니 매달린 값이 샐 자리가 없다.
-// ★필드를 "읽는 것" 자체가 던질 수 있다(throw하는 getter, 해지된 Proxy). 리스너는 emit 스택 위에서 도니까
-//   여기서 터진 예외는 그대로 프로세스로 올라간다 — 이 리스너가 막으려던 바로 그 죽음이다. 그래서 프로퍼티
-//   접근과 문자열화를 전부 여기 가둔다: 무엇이 올라오든 상수 문자열로 떨어질 뿐 밖으로는 아무것도 새지 않는다.
+// 풀 error(=pg가 올려주는 임의의 남의 값)에서 로그 한 줄을 만든다 — ★던지지 않고, ★값을 문자열로 바꾸지 않는다.
+// 규율은 허용목록이다: 안전하다고 *확인한* 조각만 줄에 넣고, 확인 못 한 건 값이 아니라 타입만 남긴다.
+// ★왜 허용목록인가 — 위험한 모양을 하나씩 막는 블록리스트는 매번 새 구멍이 났다(콘솔의 객체 펼침 →
+//   throw null → 던지는 getter → toPrimitive를 매단 *함수*). 구멍은 늘 "우리가 세어보지 못한 모양"이었다.
+//   확인된 문자열 말고는 줄에 들어갈 길이 없으면, 세어보지 못한 모양이 와도 타입 이름으로 떨어질 뿐이다.
+// ★왜 문자열화가 금지인가 — String()·toString·Symbol.toPrimitive·템플릿 보간·콘솔의 객체 펼침은 전부
+//   "남의 코드 실행"이다. 그 코드는 (a) 던져서 프로세스를 죽이거나(리스너는 emit 스택 위에서 도니 여기서
+//   터진 예외는 그대로 프로세스로 올라간다 — 이 리스너가 막으려던 바로 그 죽음) (b) 값에 매달린 자격증명을
+//   흘린다(실측: pg는 err에 Client를 매달아 DB password를 평문으로 들고 있다).
 //   (worker/src/index.ts가 같은 규율을 쓴다 — 아키타입은 앱당 하나만 복사되니 각자 자기 것을 갖는다.)
 const errLine = (e: unknown): string => {
-  const read = (key: string): string | undefined => {
+  // 허용 필드만, 그것도 *이미* 문자열일 때만 채택한다(문자열이 아닌 걸 살리려면 문자열화해야 하니까).
+  // 읽는 것 자체가 던질 수 있어(던지는 getter·해지된 Proxy) 읽기를 가둔다 — 한 필드가 터져도 그 필드만 버린다.
+  const field = (key: "code" | "message" | "stack"): string | undefined => {
     try {
       const v = (e as Record<string, unknown>)[key];
-      return typeof v === "string" ? v : undefined; // 문자열이 아니면 없는 셈 친다 — 객체면 펼쳐야 하니까.
+      return typeof v === "string" ? v : undefined;
     } catch {
-      return undefined; // getter·Proxy가 폭발했다 — 이 필드만 포기하고 나머지로 계속한다.
+      return undefined;
     }
   };
   try {
-    if (typeof e !== "object" || e === null) return `pg pool error (code=none): ${String(e)}`; // 원시값 — 매달린 값이 없다.
-    return `pg pool error (code=${read("code") ?? "none"}): ${read("stack") ?? read("message") ?? "(읽을 수 있는 message·stack 없음)"}`;
+    // 값 자체를 보여줄 수 있는 건 원시값뿐이다. number·boolean·bigint의 ToString은 스펙 내부 연산이라
+    // 프로토타입도 훅도 거치지 않는다(symbol은 던지고, 객체·함수는 훅을 부르므로 이 분기에 못 온다).
+    // 그 외는 타입만 남긴다 — 사람이 "뭔가 올라왔으니 가서 보라"를 알기엔 충분하고, 매달린 값은 샐 자리가 없다.
+    const own =
+      typeof e === "string"
+        ? e
+        : typeof e === "number" || typeof e === "boolean" || typeof e === "bigint"
+          ? `${e}`
+          : `(읽을 수 있는 message·stack 없음: ${e === null ? "null" : typeof e})`;
+    return `pg pool error (code=${field("code") ?? "none"}): ${field("stack") ?? field("message") ?? own}`;
   } catch {
-    // 최후 방어선 — String()도 던질 수 있다(해지된 *함수* Proxy는 typeof가 "function"이라 위 원시값 분기로 샌다).
-    return "pg pool error (code=?): (읽을 수 없는 error 값)";
+    // 도달 불가여야 한다(위 조각은 전부 확인된 문자열이다). 그래도 남긴다 — 여기서 던지면 프로세스가 죽는다.
+    return "pg pool error (code=?): (로그 조립 실패)";
   }
 };
 

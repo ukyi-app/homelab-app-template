@@ -1,0 +1,34 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "release",
+  "verdict": "needs-attention",
+  "summary": "R-7 prevents the reported crash paths and the CI run is valid, but it is not fully closed: callable values can bypass the field allowlist and leak attached credentials through successful coercion. No critical issue found; one medium security regression remains.",
+  "planFile": "docs/prds/template-hardening.md",
+  "planInDiff": null,
+  "reviewedFileCount": 34,
+  "target": "branch diff against main",
+  "reviewedSha": "1b8bba9bfbfcb4c20994c885a7e7a9c20d4e6106",
+  "reviewedTree": "7725008c2439e1d98b448d1b4d4cc6a4da5ce570",
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 1,
+  "planFindingCount": 0,
+  "findings": [
+    {
+      "severity": "medium",
+      "title": "Callable values bypass the non-expanding error sanitizer",
+      "body": "The primitive branch includes functions because `typeof function === \"function\"`, so it invokes `String(e)` instead of reading only allowlisted fields. A callable carrying `client.password` with a non-throwing `Symbol.toPrimitive` logged that password in both this formatter and worker `src/index.ts:53`. The pre-60e0ec9 DB formatter logged `undefined` for the same value, making this a regression introduced by the db.ts application. Verification tests throwing coercion and a credential-bearing Error separately, so green CI misses this cross-case. A callable emitted or thrown by application or SDK code could therefore expose credentials or PII in centralized logs.",
+      "file": "scaffold/archetypes/api/src/db.ts",
+      "line_start": 59,
+      "line_end": 60,
+      "confidence": 0.99,
+      "recommendation": "Treat functions as object-like and route them through the guarded `code`/`stack`/`message` reads; only coerce actual primitives. Add worker and DB regression cases using a callable with an attached sentinel and a successful `Symbol.toPrimitive`, asserting the hook's value is never logged.",
+      "isPlanFinding": false
+    }
+  ],
+  "next_steps": [
+    "Fix both formatter copies and add the callable credential-sentinel regression case.",
+    "Re-run the API tests, worker hostile-value container harness, and five-job template CI at the fix SHA; refresh the committed evidence."
+  ]
+}

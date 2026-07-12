@@ -146,4 +146,81 @@ describe("pg 풀 오류 격리", () => {
     // 프로세스가 살아 있다는 증거 — 앱이 그대로 서빙한다.
     expect((await get(app, "/healthz")).status).toBe(200);
   });
+
+  test("호출 가능한 값이 올라와도 문자열화 훅은 아예 돌지 않는다", async () => {
+    const pool = new StubPool();
+    const app = inject(pool);
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      // 크래시 방어가 유출을 열었던 자리다: "원시값은 String()으로 찍자"고 하면 typeof fn === "function"인
+      // 함수가 그 분기로 새고, String(fn)이 남의 훅을 부른다. 훅이 던지지만 않으면 그 반환값이 로그에 앉고,
+      // 매달린 password도 훅이 원하는 순간 같이 나간다. 그래서 "훅을 부른 뒤 결과를 검사"하지 않는다 —
+      // 아예 부르지 않는다.
+      let hookRan = false;
+      const fn = Object.assign(() => {}, {
+        client: { password: "SENTINEL_pw" },
+        [Symbol.toPrimitive]: () => {
+          hookRan = true;
+          return "harmless-looking";
+        },
+      });
+
+      expect(() => pool.emit("error", fn)).not.toThrow();
+
+      expect(hookRan).toBe(false);
+      const [line] = logged.mock.calls[0] as [unknown];
+      expect(typeof line).toBe("string");
+      expect(line).not.toContain("SENTINEL_pw");
+      expect(line).not.toContain("harmless-looking");
+      expect(line).toContain("function"); // 값 대신 타입 — 사람이 "뭔가 올라왔으니 가서 보라"를 알기엔 충분하다.
+    } finally {
+      logged.mockRestore();
+    }
+
+    expect((await get(app, "/healthz")).status).toBe(200);
+  });
+
+  test("무엇이 올라오든 죽지 않고, 값이 아니라 타입으로 떨어진다", async () => {
+    const pool = new StubPool();
+    const app = inject(pool);
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    const { proxy: revoked, revoke } = Proxy.revocable({}, {});
+    revoke();
+
+    // 구멍은 매번 "우리가 세어보지 못한 모양"에서 났다. 그래서 모양을 세는 대신 규율을 고정한다:
+    // 무엇이 올라와도 (1) 리스너는 던지지 않고 (2) 줄은 문자열이며 (3) 매달린 값도 훅 반환값도 나오지 않는다.
+    // 새 모양이 생겨도 이 표에 없을 뿐 결과는 같다 — 허용목록의 기본값이 "타입만"이기 때문이다.
+    const bait = { client: { password: "SENTINEL_pw" }, [Symbol.toPrimitive]: () => "SENTINEL_hook" };
+    const cases: [unknown, string][] = [
+      [null, "null"],
+      [undefined, "undefined"],
+      ["just a string", "just a string"], // 원시 문자열은 문자열화가 필요 없다 — 그대로 보여준다.
+      [42, "42"],
+      [10n, "10"],
+      [Symbol("s"), "symbol"], // 보간했다면 TypeError로 죽는다 — 그래서 symbol은 원시값 분기에 없다.
+      [Object.assign(Object.create(null), { client: { password: "SENTINEL_pw" } }), "object"], // toString이 아예 없다 — String()이었다면 TypeError.
+      [bait, "object"],
+      [Object.assign(() => {}, bait), "function"],
+      [Object.assign(() => {}, { client: { password: "SENTINEL_pw" }, toString: () => "SENTINEL_hook" }), "function"],
+      [{ get message(): string { throw new Error("boom"); } }, "object"], // 읽는 것 자체가 던진다.
+      [revoked, "object"], // 해지된 Proxy — 모든 접근이 던진다.
+    ];
+
+    try {
+      for (const [e] of cases) expect(() => pool.emit("error", e)).not.toThrow();
+
+      expect(logged).toHaveBeenCalledTimes(cases.length); // 삼키되 침묵하지 않는다 — 순단마다 한 줄.
+      cases.forEach(([, expected], i) => {
+        const [line] = logged.mock.calls[i] as [unknown];
+        expect(typeof line).toBe("string");
+        expect(line).toContain(expected);
+        expect(line).not.toContain("SENTINEL");
+      });
+    } finally {
+      logged.mockRestore();
+    }
+
+    expect((await get(app, "/healthz")).status).toBe(200);
+  });
 });
