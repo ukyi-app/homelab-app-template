@@ -207,12 +207,86 @@ $ echo x > scaffold/common/CONTEXT.md
 
 ---
 
+## 9. 실제 GitHub Actions 실행 (release 게이트 R-3)
+
+r1 게이트가 "CI가 실제 러너에서 한 번도 돌지 않았다 — I-7의 'CI가 green이다' AC가 미증명"이라고
+지적했다(정당한 지적이었다: 로컬 대체 검증은 액션 입력값·matrix·러너 환경을 실행하지 않는다).
+브랜치를 push해 PR #14로 template-ci를 **실제 `ubuntu-24.04-arm` 러너에서** 실행했다.
+
+**Run**: https://github.com/ukyi-app/homelab-app-template/actions/runs/29195573415
+**SHA**: `3df189b` (release 게이트 수정 R-1/R-2/R-4 포함)
+
+| 잡 | 결과 |
+|---|---|
+| `scaffold-build (fullstack)` | **pass** (36s) |
+| `scaffold-build (api)` | **pass** (34s) |
+| `scaffold-build (site)` | **pass** (31s) |
+| `scaffold-build (worker)` | **pass** (34s) |
+| `scaffold-args` | **pass** (7s) |
+
+스모크 단언이 **실제로 실행**됐음을 러너 로그로 확인(스킵된 초록이 아님):
+```
+✅ /healthz → 200 'ok'          (api — .app-config.yml에서 유도한 경로)
+✅ /readyz → 200 'ready'
+✅ worker: SIGTERM → 121ms 만에 종료(exit 0, 상한 2s, 주기 5000ms) + 'worker stopped'
+✅ site: /health → 200, / → 200(<title>homelab site</title> 확인), 없는 경로 → 404
+✅ bun 정합: 5곳(Dockerfile 4 + .bun-version) 모두 1.3.14
+✅ api 풀러-안전(statement_timeout startup 미전송) + readiness 배선 확인
+```
+
+## 10. release 게이트 r1 수정의 검증 (R-1 / R-2 / R-4)
+
+### R-1 — 비권위적 `--name`이 배포 시크릿을 결정하던 문제
+게이트 지적: 스캐폴더가 "이 값은 배포 식별자가 아니다"라고 **경고해놓고 그 값을 `secret:seal --app`에
+베이크**해, origin `real-name` + `--name ci-api`면 `ci-api-secrets`가 나오는데 create-app은
+`real-name-secrets`를 요구한다(하드 리젝). 검증이 두 픽스처를 분리해 이 교차 케이스를 놓쳤다.
+
+수정 후 실측(kubeseal 실행):
+```
+origin=real-name, --name ci-api → exit 0 + 불일치 경고
+  package.json name : ci-api                              (표시 이름)
+  secret:seal       : --app real-name                     (배포 식별자)
+  kubeseal 산출물   : deploy/real-name-secrets.sealed.yaml
+  metadata.name     : real-name-secrets                   ← create-app이 요구하는 값
+BEFORE(수정 전)     : deploy/ci-api-secrets.sealed.yaml   ← 온보딩 리젝
+```
+**PASS** — 배포 이름은 모든 경로에서 NAME_RE 검증을 거치며, `--name`이 절대 바꿀 수 없다.
+
+### R-2 — 사용자 파일 무음 삭제
+게이트 지적: `docs/`를 통째로 지우는 삭제가, 사용자가 스캐폴드 **전에** 넣어둔 자기 파일까지
+경고 없이 파괴한다.
+```
+$ echo "내 메모" > docs/my-notes.md && bun run scaffold --archetype api --name ci-api --yes
+→ exit 2, docs/my-notes.md 생존, src/ 미생성, README.md 미덮어씀
+   메시지가 파괴될 파일을 이름으로 지목하고 "옮긴 뒤 다시 실행해라. 아무것도 건드리지 않았다"
+```
+**PASS** — 귀속 기준은 **이 레포의 최초 커밋 트리**라 코드에 목록을 베끼지 않는다(템플릿 문서가
+늘어도 낡지 않는다). 정상 경로(사용자 파일 없음) 오탐 0 — 실제 CI 4개 잡이 이를 증명한다.
+
+> 게이트가 함께 제기한 "히스토리 오염"(템플릿 레포 복사 시점의 초기 커밋에 이미 문서가 들어 있다)은
+> **기각**했다: GitHub 템플릿 복사는 이 레포 밖 동작이고, 초기 커밋 재작성은 스캐폴더의 일이 아니다.
+
+### R-4 — worker가 원시 에러 객체를 로깅
+게이트 지적: 이 브랜치의 `db.ts`가 **바로 그 패턴이 Bun에서 DB 비밀번호를 평문 노출함을 재현·문서화**
+해놓고, worker의 catch에는 같은 패턴을 그대로 뒀다.
+
+sentinel 크리덴셜을 첨부한 에러를 스크래치 사본에 주입해 실 컨테이너 로그 확인:
+```
+BEFORE:  error: boom
+           client: { password: "SENTINEL_pw_9z" },     ← 유출
+AFTER:   tick failed (code=X1): Error: boom
+             at /$bunfs/root/app:28:34                  ← 크리덴셜 부재, message·code 보존
+         (프로세스 생존 + 1s 백오프로 재시도 계속)
+```
+**PASS** — `SENTINEL_pw_9z` 부재, `code=X1`·message 보존, 예외 반복에도 프로세스 생존.
+
+---
+
 ## 검증하지 못한 것 (정직한 공백)
 
-- **GitHub Actions 실행 자체**: 로컬에서 러너를 띄울 수 없어, CI 스텝의 `run:` 블록을 YAML에서
-  원문 추출해 `bash -eo pipefail`(러너의 기본 셸 의미론)로 실행하는 방식으로 대체했다. 러너 환경
-  특유의 실패(네트워크, `ubuntu-24.04-arm` 이미지 차이)는 첫 CI 실행에서만 드러난다.
 - **homelab 클러스터 배포**: 실제 k3s 배포·차트 연동은 이 레포 밖이다. 차트가 소비하는
-  `.app-config.yml`의 스키마 적합성은 template-ci가 homelab 스키마(@main)로 검증한다.
+  `.app-config.yml`의 스키마 적합성은 template-ci가 homelab 스키마(@main)로 검증한다(CI에서 통과).
 - **Renovate 실제 PR 생성**: dry-run으로 브랜치/파일 집합을 확인했으나, 실제 GitHub에서의 토큰
   권한·PR 생성은 F-1(레포 등록) 이후에만 관측 가능하다.
+- **사용자 파일 보호 가드는 git 저장소에서만 동작**한다(귀속 기준이 최초 커밋 트리이므로). ZIP으로
+  받아 쓰는 경로는 여전히 구멍이며, 템플릿 문서를 같은 경로에서 **수정만** 한 경우도 구분되지 않는다.
