@@ -38,12 +38,19 @@ while (running) {
     console.log("tick", new Date().toISOString());
   } catch (e) {
     // 일시 오류가 프로세스를 즉사시키지 않게 흡수한다. 치명/일시 분류는 작업을 채우는 쪽의 몫.
+    // ★throw된 값이 Error라는 보장은 없다(throw null·throw "문자열"·await Promise.reject()) — 타입 단언 뒤
+    //   구조분해하면 그 구조분해 자체가 catch 안에서 TypeError를 내 워커가 죽는다(이 try/catch가 막으려던
+    //   바로 그 죽음이다). 그래서 단언이 아니라 런타임으로 좁힌다.
     // ★에러 객체를 그대로 넘기지 않는다 — 콘솔이 객체를 펼치면 거기 매달린 자격증명까지 찍힌다
     //   (실측: pg는 err에 Client를 매달아 DB password를 평문으로 흘린다 — api의 src/db.ts가 같은 이유로 같은 규율을 쓴다).
-    //   위 TODO가 DB·SDK 호출로 채워지는 순간 그 유출이 중앙 로그로 간다 — 진단에 필요한 필드만 뽑는다.
-    //   String(e)는 Error가 아닌 throw(문자열·객체)용 최후 수단이다 — 객체를 펼치지 않으니 매달린 값이 새지 않는다.
-    const { code, stack, message } = e as Error & { code?: string };
-    console.error(`tick failed (code=${code ?? "none"}): ${stack ?? message ?? String(e)}`);
+    //   위 TODO가 DB·SDK 호출로 채워지는 순간 그 유출이 중앙 로그로 간다 — 허용 필드(code·stack·message)만,
+    //   그것도 문자열일 때만 읽는다. 원시값 throw만 String()으로 찍는다(객체는 펼치지 않으니 매달린 값이 새지 않는다).
+    const isObj = typeof e === "object" && e !== null;
+    const obj = (isObj ? e : null) as { code?: unknown; stack?: unknown; message?: unknown } | null;
+    const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+    const code = str(obj?.code) ?? "none";
+    const detail = str(obj?.stack) ?? str(obj?.message) ?? (isObj ? "(Error가 아닌 객체)" : String(e));
+    console.error(`tick failed (code=${code}): ${detail}`);
     delay = BACKOFF_MS;
   }
   await sleep(delay);

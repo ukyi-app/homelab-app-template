@@ -279,20 +279,29 @@ for (const src of ["common", `archetypes/${archetype}`]) for (const p of SELF_DE
 //     그 템플릿으로 만든 레포의 최초 커밋도 함께 바뀌므로, 기준은 언제나 '그 사본이 실제로 받은 것'이다.
 //   ★tracked 여부로 판정하지 않는다 — 메모를 먼저 커밋한 사용자를 놓친다(tracked인데 템플릿 것이 아니다).
 //     최초 커밋 '이후'에 생긴 파일은 커밋했든 안 했든 전부 사용자 것이다.
+//   ★gitignore 여부로도 판정하지 않는다(그건 '사용자 것이 아니다'라는 뜻이 아니다 — 아래 DISPOSABLE 참고).
 // git이 없는 사본(template-ci의 `rm -rf .git`)엔 기준 자체가 없다 — 귀속이 불가능하므로 가드는 돌지 않는다.
+
+// 가드를 막지 않는 유일한 예외 — OS가 사용자 몰래 만드는 뷰 메타데이터. basename을 정확히 지목한다:
+// '사용자가 절대 아쉬워할 수 없는 파일'만 여기 들어온다(맥에서 docs/를 Finder로 열기만 해도 .DS_Store가 생겨
+// 스캐폴드가 막히는 걸 막으려는 것뿐). ignore 여부를 이 판정의 대리물로 쓰면 안 된다 — 사용자가 손으로 쓴
+// .env·*.local까지 '지워도 되는 것'으로 삼켜 조용히 파괴한다.
+const DISPOSABLE = new Set([".DS_Store", "Thumbs.db"]);
 const inRepo = (() => { const t = git("rev-parse", "--show-toplevel"); return t !== null && realpath(t) === realpath(ROOT); })();
 const roots = inRepo ? git("rev-list", "--max-parents=0", "HEAD")?.split("\n").filter(Boolean) : undefined;
 if (roots?.length) {
   // -z: 경로에 특수문자가 있으면 git이 따옴표로 감싸 이스케이프한다 — NUL 구분자로 받으면 그 변형이 없다.
   const zLines = (...a: string[]): string[] => (git(...a) ?? "").split("\0").filter(Boolean);
   const shipped = new Set(roots.flatMap((sha) => zLines("ls-tree", "-r", "--name-only", "-z", sha)));
-  // gitignore된 파일(.DS_Store 등)은 사용자의 '데이터'가 아니다 — 여기서 걸면 맥에서 스캐폴드가 못 돈다.
-  for (const f of zLines("ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", ...SELF_DELETE)) shipped.add(f);
   // lstat: 심볼릭 링크를 따라가지 않는다(링크 너머 사용자 트리로 걸어 들어가지 않게).
   const walk = (rel: string): string[] => existsSync(join(ROOT, rel))
     ? (lstatSync(join(ROOT, rel)).isDirectory() ? readdirSync(join(ROOT, rel)).flatMap((e) => walk(`${rel}/${e}`)) : [rel])
     : [];
-  const mine = SELF_DELETE.flatMap(walk).filter((f) => !shipped.has(f));
+  // ★gitignore 여부를 귀속 근거로 쓰지 않는다 — 이 레포의 .gitignore는 `*.local`·`.env`·`.env.*`를 덮는데
+  //   그건 '버려도 되는 파일'이 아니라 사용자가 손으로 쓴 값이다(docs/notes.local·docs/.env). ignore된 걸
+  //   지워도 되는 것으로 세면 가드를 통과한 뒤 통째 삭제에 함께 쓸려 조용히 사라진다.
+  //   최초 커밋 트리에 없으면 전부 사용자 것이다 — 예외는 위 DISPOSABLE(basename 정확 일치)뿐.
+  const mine = SELF_DELETE.flatMap(walk).filter((f) => !shipped.has(f) && !DISPOSABLE.has(basename(f)));
   if (mine.length) {
     // exit 2(사용자 입력 오류)다 — 템플릿은 어긋나지 않았고(그건 exit 1), 고칠 수 있는 건 사용자의 트리 상태뿐이다.
     const shown = mine.slice(0, 20).map((f) => `   ${f}`).join("\n") + (mine.length > 20 ? `\n   …외 ${mine.length - 20}개` : "");
