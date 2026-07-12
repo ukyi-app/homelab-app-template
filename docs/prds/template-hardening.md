@@ -6,7 +6,7 @@ review-track: standard
 pipeline-stage: executing
 issue-tracker: local
 prd-published: true
-issues: [I-1, I-2, I-3, I-4, I-5, I-6, I-7]
+issues: [I-1, I-2, I-3, I-4, I-5, I-6, I-7, I-8]
 skeleton-issue: []   # standard 트랙 — structure gate 미실행, 배리어 비활성(P-4 결정)
 ---
 
