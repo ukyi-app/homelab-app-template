@@ -84,6 +84,7 @@ describe("pg 풀 오류 격리", () => {
       pool.healthy = false;
       const evicted = Object.assign(new Error("terminating connection due to administrator command"), {
         code: "57P01",
+        client: { password: "SENTINEL_pw" }, // pg가 실제로 err에 매다는 것 — Client에 평문 password가 들어 있다.
       });
       pool.emit("error", evicted);
 
@@ -91,8 +92,9 @@ describe("pg 풀 오류 격리", () => {
       // 리스너의 유일한 관측 가치가 사라진다: 무엇이 끊었는지(message) + 어느 계층인지(code).
       expect(logged).toHaveBeenCalledTimes(1);
       const [line] = logged.mock.calls[0] as [unknown];
-      // 에러 객체째 넘기면 pg가 err에 매단 Client까지 찍힌다(=DB password 평문) — 문자열로 좁힌다.
+      // 에러 객체째 넘기면 콘솔이 그 객체를 펼쳐 매달린 Client까지 찍는다(=DB password 평문).
       expect(typeof line).toBe("string");
+      expect(line).not.toContain("SENTINEL_pw");
       expect(line).toContain("terminating connection due to administrator command");
       expect(line).toContain("57P01");
     } finally {
@@ -108,5 +110,40 @@ describe("pg 풀 오류 격리", () => {
     // 4) 같은 풀이 회복되면(재연결) 다음 왕복에서 readiness가 다시 200 — 자동 회복.
     pool.healthy = true;
     expect((await get(app, "/readyz")).status).toBe(200);
+  });
+
+  test("필드를 읽는 것만으로 던지는 error가 올라와도 리스너는 죽지 않고 원인을 남긴다", async () => {
+    const pool = new StubPool();
+    const app = inject(pool);
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      // 리스너는 emit 스택 위에서 돈다 — 리스너 안에서 던지면 그 예외가 프로세스로 올라간다(리스너가
+      // 막으려던 그 죽음). 프로퍼티 접근 자체가 던질 수 있다: throw하는 getter, 해지된 Proxy.
+      const hostile = Object.assign(new Error("terminating connection due to administrator command"), {
+        client: { password: "SENTINEL_pw" },
+      });
+      Object.defineProperty(hostile, "code", {
+        get() {
+          throw new Error("blew up");
+        },
+      });
+
+      expect(() => pool.emit("error", hostile)).not.toThrow();
+
+      // 폭발한 필드 하나 때문에 로그 전체를 잃지 않는다 — code는 포기해도 원인(message/stack)은 남아야 한다.
+      expect(logged).toHaveBeenCalledTimes(1);
+      const [line] = logged.mock.calls[0] as [unknown];
+      expect(typeof line).toBe("string");
+      expect(line).toContain("terminating connection due to administrator command");
+      expect(line).not.toContain("SENTINEL_pw");
+      // getter가 던진 예외가 진단을 덮어쓰면 안 된다 — 우리가 알고 싶은 건 풀을 끊은 원인이다.
+      expect(line).not.toContain("blew up");
+    } finally {
+      logged.mockRestore();
+    }
+
+    // 프로세스가 살아 있다는 증거 — 앱이 그대로 서빙한다.
+    expect((await get(app, "/healthz")).status).toBe(200);
   });
 });
