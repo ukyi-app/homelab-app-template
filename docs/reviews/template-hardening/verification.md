@@ -406,6 +406,74 @@ api 테스트 **14 → 16**: 콜러블 센티넬 케이스 + **12행 타입 표*
 **Run**: https://github.com/ukyi-app/homelab-app-template/actions/runs/29201410004
 **SHA**: `5322d06` · 5개 잡 전부 **pass** (api 이미지 게이트 안에서 16 pass 확인)
 
+## 14. release 게이트 r5 → 읽기 규율까지 닫음 (R-9, 클래스 종결)
+
+r5 게이트: **allowlist된 읽기가 여전히 callable accessor를 실행한다.** `field()`가 `e[key]`를
+평가하고, 가드는 **던지는** accessor만 잡으며 **성공한 getter의 반환값은 신뢰**한다. `client.password`를
+달고 `get message() { return this.client.password }`를 가진 callable이 그 password를 로깅했다 —
+**재설계가 만든 회귀**(강제 변환 훅을 accessor 훅으로 바꿨을 뿐).
+
+핵심 진단: allowlist는 "**어떤 값**을 쓸지"만 제한했고 "**어떻게 읽을지**"는 제한하지 않았다.
+
+### 마지막 통로를 닫는다 — descriptor-only
+- 객체가 아니면(함수·심볼·원시값) **필드 읽기 전에** 타입 라벨로 낙하
+- 읽을 때는 `Object.getOwnPropertyDescriptor` + **`Object.hasOwn(d, "value")`**로 **own 데이터
+  서술자일 때만** 값을 채택 — **accessor는 호출하지 않고 거절**
+- `"value" in desc`가 **아니라** `Object.hasOwn`을 쓴 이유(구현자가 실측으로 발견): 서술자의
+  프로토타입은 `Object.prototype`이라, 누가 `Object.prototype.value`에 getter를 심으면 `in` 검사가
+  accessor 서술자를 통과시키고 뒤이은 `d.value`가 **그 상속 getter를 호출한다** — 결함 클래스가
+  프로토타입 오염이라는 뒷문으로 재유입된다.
+
+**Bun 실측**: native Error의 `message`·`stack`·`code`는 **전부 own 데이터**(V8과 달리 stack이
+accessor가 아니다) → 진단을 잃지 않는다. 프로토타입 accessor로 `code`를 노출하는 커스텀 에러
+클래스만 `code=none`으로 떨어지는데, 선의의 accessor와 악의의 accessor는 구분할 수 없으므로
+의도된 트레이드다.
+
+### 남아 있는 "남의 코드 실행" 통로 — 전수 열거
+포맷팅 중 실행되는 연산: `typeof` / `=== null` / **원시값만** 보간 / `getOwnPropertyDescriptor` /
+`hasOwn` / own 데이터 GET / 문자열 연결 / `console.error(string)`.
+남의 코드가 돌 수 있는 곳은 **Proxy의 `getOwnPropertyDescriptor` trap 하나뿐**이고, try/catch로
+감싸여 있으며, 그 trap이 데이터 서술자로 돌려주는 문자열은 **앱이 직접 빚어 "이게 message다"라고
+건넨 데이터** — "앱이 스스로 message에 비밀을 넣었다"와 같은 정책 경계다.
+(정직한 예외: 앱이 `Object.getOwnPropertyDescriptor` 자체를 갈아치우는 렐름 변조. 유저랜드 JS로
+방어 불가. 현실적으로 잦은 수동적 형태인 **프로토타입 오염은 위 `hasOwn` 선택으로 닫혔다**.)
+
+### 적대적 배터리 — worker 25종 / db 26종
+**BEFORE: worker 5 FAIL, db 5 FAIL → AFTER: 0 FAIL / 0 FAIL.**
+
+| 케이스 | BEFORE | AFTER |
+|---|---|---|
+| callable + password + **성공하는** `get message()` (R-9 repro) | **LEAK** `SENTINEL_pw`, 훅 실행됨 | `(...: function)`, **훅 0회** |
+| 객체 + 성공하는 `get message()` | **LEAK** | `(...: object)`, 훅 0회 |
+| 성공하는 `get code()` / `get stack()` | **LEAK** | 훅 0회 |
+| 살아있는 Proxy `get` trap | **LEAK ×2** | 훅 0회 |
+| native Error(진단 보존) | PASS | `Error: plain native failure` / `(code=ECONNRESET)` |
+| 기존 전 케이스(던지는 getter·해지 Proxy·훅·nullish·원시값·null-proto) | PASS | PASS |
+
+AFTER 전 케이스: Running=true, 백오프 1.00~1.01s 지속, `console.error` 인자 = **문자열 1개**,
+SENTINEL 0건, 훅 0회.
+
+### 같은 클래스의 마지막 인스턴스 — `/readyz` 핸들러
+`e instanceof Error ? e.message : String(e)` — 평범한 GET(accessor 실행 가능) + `String()`(훅 실행).
+**싱크가 HTTP 503 본문이라 로그보다 더 위험하다**(파드에 닿는 누구나 읽고 k8s 이벤트가 퍼 나른다).
+같은 규율로 닫았다. 본문 정책: **code + message는 싣고 stack은 뺀다**(로그에는 stack 유지).
+
+RED→GREEN: 취약 코드에서 `not ready: SENTINEL_pw`(본문 유출) + 훅 실행 + 던지는 getter가 핸들러를
+뚫어 500 → 수정 후 22 pass. **구현자가 자기 가짜 GREEN을 잡아냈다**: 처음엔 plain object로
+sentinel을 심었는데 옛 코드는 `instanceof Error`일 때만 `.message`를 읽어 우연히 안전했다 —
+pg가 reject하는 건 **Error**이므로 Error 인스턴스로 심어야 실제 채널을 겨냥한다.
+
+실 Postgres: DB 정지 → `/readyz` 503 `not ready (code=none): Connection terminated...`, `/healthz`
+200 유지, restarts=0 → DB 복구 → 200. 잘못된 password로 붙이면 `(code=28P01): password
+authentication failed` — 진단은 살아 있고 password는 나가지 않는다(로그·본문 SENTINEL 0건).
+
+읽기 규율 구현은 **아키타입 안에서 하나뿐**(db.ts가 export). 뮤테이션으로 확인: 공유 헬퍼를
+`e[key]`로 되돌리면 **두 싱크가 동시에 깨진다**. api 테스트 16 → **22**.
+
+### 실제 CI 재실행
+**Run**: https://github.com/ukyi-app/homelab-app-template/actions/runs/29216623881
+**SHA**: `12d8716` · 5개 잡 전부 **pass**
+
 ---
 
 ## 검증하지 못한 것 (정직한 공백)
