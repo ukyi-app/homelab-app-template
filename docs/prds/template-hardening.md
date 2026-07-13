@@ -307,7 +307,7 @@ I-3의 실제 가치는 (a) **pg 계약 준수** — unhandled pool error가 던
 ## Follow-up Backlog
 | ID | Item | Source | Issue |
 |----|------|--------|-------|
-| F-1 | homelab Renovate 레포 등록 배선(RENOVATE_REPOSITORIES에 신규 앱 추가 또는 allowlist autodiscover 전환) — 담당: 오너, 위치: homelab 레포, 시점: 다음 신규 앱 생성 전, 수용 기준: Renovate 런 로그에 앱 레포 스캔 | P-3 (accepted, scope 축소) | done 단계에서 파일 |
+| F-1 | ✅ **처리됨(2026-07-13)** — autodiscover + `requireConfig=required`로 전환해 '설정 파일의 존재 = opt-in'이 되게 했다(신규 앱은 템플릿이 설정을 동봉하므로 자동 편입, 비-앱 레포는 `disabled-no-config`로 자동 스킵 — dry-run 실측). PR: homelab#347, page#9, trip-mate-api#30. **남은 owner 수동 1건**: writer App(ukyi-homelab-writer) 설치 범위를 `selected` → 조직 전체(All repositories)로 확대 — 그 전까지는 기존 대상만 계속 돈다(fail-safe) | P-3 | homelab#347 |
 | F-6 | **에러 포매터의 Proxy 잔여** — 살아있는 Proxy의 `getOwnPropertyDescriptor` trap이 첨부된 크리덴셜을 `message`인 척 own 데이터 서술자로 합성해 반환하면 현재 헬퍼가 수용한다. JS에서 임의 값의 프로퍼티를 trap 없이 읽는 방법이 없어 구조적 한계이며, 위협 모델상 공격자 코드가 이미 in-process여야 성립한다(수동적 유출 = pg가 진짜 Error에 password를 첨부하는 케이스는 완전히 닫힘). release 게이트 r6가 이를 지적했으나 엔진 장애로 형식 판정 불가 → 사람이 waive. **재평가 조건**: 게이트 엔진이 이 브랜치를 완주할 수 있게 되면 재리뷰 / 또는 진단 손실 없이 닫는 방법이 나오면 재검토 | release gate r6 (waived) | 재리뷰 대기 |
 | F-7 | **worker 아키타입에 테스트가 없다** — 포매터의 읽기 규율이 worker에도 복사되지만, worker엔 test 스크립트가 없어(Dockerfile 게이트 목록이 typecheck+build뿐) 드리프트를 CI가 잡지 못한다. api의 같은 코드가 간접 증명할 뿐 | R-9 라운드 관찰 | 별도 판단 |
 | F-5 | 스캐폴드된 앱에 **PR CI가 없다**(release.yaml은 `push: main` 전용) — Renovate PR이 시그널 0인 채로 사람 앞에 오고, Dockerfile 게이트는 머지 **후에야** 발화한다. `common/`에 PR 트리거 워크플로(최소 docker build)를 넣을지 판단 | I-6 code-review | 별도 이슈 |
