@@ -13,23 +13,48 @@ export function createPool(connectionString: string): Pool {
   return new Pool(buildPoolConfig(connectionString));
 }
 
-// homelab conn SealedSecret은 <APP>_DATABASE_URL / <APP>_MIGRATE_DATABASE_URL / <APP>_RO_DATABASE_URL
-// 형태로 env를 주입한다(provision-db 규약). 앱 이름을 몰라도 되도록 접미사로 자동 발견하되, 접두사 없는
-// generic DATABASE_URL이 있으면 그쪽이 우선한다(접미사 매칭은 generic이 없을 때만 돈다).
-// 런타임 URL은 MIGRATE_/RO_ 키를 제외한다.
+// homelab conn SealedSecret은 <DB>_DATABASE_URL / <DB>_MIGRATE_DATABASE_URL / <DB>_RO_DATABASE_URL
+// 형태로 env를 주입한다(provision-db 규약).
+// ★<DB>는 앱 이름이 아니라 create-database에 준 *DB 이름*의 UPPER_SNAKE다(provision-db.ts:
+//   name.replaceAll("-","_").toUpperCase()). 둘은 같을 의무가 없다 — 실제로 앱 trip-mate-api는 DB
+//   trip-mate를 받아 키가 TRIP_MATE_DATABASE_URL이다. 그래서 접두사를 *추측하지 않고* 접미사로 발견한다:
+//   앱이 자기 DB 이름을 몰라도 붙는다(그 이름을 코드에 박으면 DB를 옮길 때마다 앱이 깨진다).
+// ★우선순위는 접두사 키다 — generic DATABASE_URL은 접두사 키가 하나도 없을 때만 쓰는 fallback이다
+//   (generic은 homelab dev.ts가 로컬 Postgres에 쓰는 이름이다). 반대로 두면 개발자의 .env에 남은
+//   DATABASE_URL이 봉인되어 파드까지 따라가 플랫폼이 주입한 진짜 URL을 가린다 — 프로덕션이 조용히
+//   죽은 localhost나 엉뚱한 DB를 본다. 봉인 쪽(tools/seal-secret.mts)이 이 사실을 경고로 한 번 더 짚는다.
+// ★_MIGRATE_/_RO_는 런타임 후보가 아니다 — 셋 다 같은 DB를 가리키지만 롤·호스트가 다르다(provision-db):
+//   런타임은 owner 롤 + 풀러(pg-pooler-rw) 경유, _MIGRATE_는 *같은 owner 롤이지만 직결*(pg-rw — session
+//   시맨틱이 필요해서), _RO_는 읽기전용 롤 + 직결(디버깅 전용, 앱에 배선하지 않는다). 그래서 _MIGRATE_가
+//   런타임으로 새면 롤이 아니라 *풀러가* 빠진다 — 앱 풀이 공유 클러스터에 직결로 붙어 max_connections를 고갈시킨다.
+//   접두사 자리에 역할 이름만 들어온 꼴(MIGRATE_DATABASE_URL·RO_DATABASE_URL)도 함께 뺀다 — 접두사가 이기게 된
+//   순간 그게 generic을 이겨 같은 사고가 난다. 경계는 '_ 또는 문자열 시작'으로만 끊는다: DB 이름이 euro면
+//   EURO_DATABASE_URL은 정상 키인데 단순 endsWith("RO_DATABASE_URL")는 그걸 삼킨다.
+// ★후보가 둘 이상이면 던진다 — 어느 DB가 이 앱 것인지 아는 주체가 아무 데도 없다. Object.keys 순서
+//   (=삽입 순서)로 조용히 하나를 고르면 엉뚱한 DB에 쓰고도 초록이고 되돌릴 수 없다. 기동에서 죽는 편이 낫다
+//   (CrashLoop는 시끄럽고 되돌릴 수 있다). 플랫폼은 DB 하나당 접두사 키를 하나만 주입하므로, 둘이 보인다는 건
+//   봉인한 .env의 DB URL 키가 끼어들었다는 뜻이다 — 외부 DB URL을 봉인해 둔 앱이 나중에 homelab DB까지
+//   받으면 정확히 이 상태가 된다(seal-secret.mts의 경고가 미리 말하는 그 상태다).
+// ★자동 발견으로 정할 수 없는 배치라면 이 함수를 우회한다 — 풀을 직접 만들어 createApp(pool)로 넘기면 된다
+//   (index.ts: createApp(db: Pool | null = createRuntimePool())). 던지는 메시지도 그 탈출구를 가리킨다.
 type Env = Record<string, string | undefined>;
-
-function discover(env: Env, suffix: string, exclude: string[]): string | undefined {
-  if (env[suffix]) return env[suffix];
-  const key = Object.keys(env).find(
-    (k) => k.endsWith(`_${suffix}`) && !exclude.some((x) => k.endsWith(x)),
-  );
-  return key ? env[key] : undefined;
-}
+const SUFFIX = "_DATABASE_URL";
+const ROLE = /(^|_)(MIGRATE|RO)$/; // 접두사 부분이 역할 이름으로 끝나면 런타임 키가 아니다
 
 // env를 주입받는 순수 함수 — 프로세스 환경을 흔들지 않고 발견 규칙을 단위 테스트할 수 있다.
 export function runtimeUrl(env: Env = process.env): string | undefined {
-  return discover(env, "DATABASE_URL", ["_MIGRATE_DATABASE_URL", "_RO_DATABASE_URL"]);
+  const keys = Object.keys(env)
+    .filter((k) => k.endsWith(SUFFIX) && env[k] && !ROLE.test(k.slice(0, -SUFFIX.length)))
+    .sort(); // 에러 메시지를 결정적으로 만든다(값 선택엔 쓰지 않는다 — 둘 이상이면 아래에서 죽는다)
+  if (keys.length > 1) {
+    throw new Error(
+      `런타임 DB URL 후보가 여럿이다(${keys.join(", ")}) — 어느 것이 이 앱 것인지 정할 수 없어 기동을 멈춘다. ` +
+        `소스를 하나로 줄여라: homelab이 프로비저닝한 DB를 쓴다면 플랫폼이 주입한 키만 남기고 직접 봉인한 DB URL 키를 .env에서 뺀다(로컬 URL은 .env.local로). ` +
+        `외부 DB를 쓴다면 이 앱에 create-database를 돌리지 않는다. ` +
+        `둘 다 의도한 배치라면 자동 발견을 쓰지 말고 풀을 직접 만들어 createApp(pool)로 넘겨라.`,
+    );
+  }
+  return keys.length === 1 ? env[keys[0]] : env.DATABASE_URL || undefined;
 }
 
 // DB가 설정되지 않은 앱(무DB)이면 null — readiness가 정적으로 통과하도록.
