@@ -235,7 +235,7 @@ if (name !== deployName) warn(`앱 이름 '${name}'이(가) 유도값 '${deployN
 //     (a) 제자리 덮어쓴 파일 — package.json·README.md·.gitignore·renovate.json(+ install 진행도에 따라 bun.lock)는 수정된 채 남는다.
 //         renovate.json은 템플릿 루트에도 있어 common/renovate.json이 '새 엔트리'가 아니라 덮어쓰기가 된다.
 //     (b) 이미 있던 디렉토리 안에 들어간 파일 — .github/는 template-ci.yaml 때문에 존재하므로 '새 엔트리'가 아니고,
-//         그 안의 .github/workflows/release.yaml은 untracked로 살아남는다.
+//         그 안에 전개된 앱 워크플로(.github/workflows/의 release·pr — 이름을 세지 않는다)는 untracked로 살아남는다.
 //     완전 복구는 `git checkout . && git clean -fd` — checkout만으로는 untracked인 (b)가 지워지지 않는다.
 //     복구 前엔 재실행조차 불가하다: (a)의 package.json 재작성이 scripts.scaffold를 지웠으므로 scaffold/가 남아 있어도
 //     `bun run scaffold`는 `Script not found "scaffold"`로 죽는다 — 문서화된 진입점이 트리를 되돌려야 살아난다.
@@ -387,7 +387,7 @@ rmSync(join(ROOT, "package.partial.json"));
 // --- lockfile 재생성(자가삭제 前) — package.json 재작성으로 deps가 바뀌었으므로 bun.lock도 갱신해야
 //     Dockerfile의 `bun install --frozen-lockfile`이 첫 GHCR 빌드에서 통과한다. 실패 시 롤백+비0 종료. ---
 const inst = Bun.spawnSync(["bun", "install"], { cwd: ROOT, stdout: "inherit", stderr: "inherit" });
-if (inst.exitCode !== 0) { console.error("❌ bun install(lock 재생성) 실패 — 새로 생긴 루트 엔트리만 제거했다. 제자리 수정(package.json·README.md·.gitignore·renovate.json, 경우에 따라 bun.lock)과 .github/workflows/release.yaml은 남아 있고, package.json 재작성으로 scripts.scaffold가 지워져 `bun run scaffold`는 더 이상 없다 — `git checkout . && git clean -fd`로 트리를 되돌려야 재실행할 수 있다(.git 없는 사본이면 템플릿 사본을 다시 뜰 것)"); rollback(); process.exit(1); }
+if (inst.exitCode !== 0) { console.error("❌ bun install(lock 재생성) 실패 — 새로 생긴 루트 엔트리만 제거했다. 제자리 수정(package.json·README.md·.gitignore·renovate.json, 경우에 따라 bun.lock)과 .github/workflows/에 전개된 앱 워크플로는 남아 있고, package.json 재작성으로 scripts.scaffold가 지워져 `bun run scaffold`는 더 이상 없다 — `git checkout . && git clean -fd`로 트리를 되돌려야 재실행할 수 있다(.git 없는 사본이면 템플릿 사본을 다시 뜰 것)"); rollback(); process.exit(1); }
 
 // --- 템플릿 전용 머신러리·문서 제거 (SELF_DELETE 단일 출처 — 경로별 이유는 그 정의에, 전개 前 가드도 거기서 유도된다).
 //     lock 재생성 성공 後에만 — 이 앞에서 지우면 롤백이 되돌리지 못하는 '지워진 원본'이 생겨 위 롤백 주석·실패

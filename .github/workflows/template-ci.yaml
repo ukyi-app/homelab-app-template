@@ -45,9 +45,22 @@ jobs:
           bun run scaffold --archetype "$ARCHETYPE" --name "ci-$ARCHETYPE" --yes
           # 자가삭제 단언 — 지우는 대상 '전부'를 여기 열거한다. 하나가 남아도 빌드·스모크·스키마 검증은 전부
           # 초록이라(앱은 멀쩡히 돈다) 이 줄이 유일한 관측점이고, 놓치면 앱 레포마다 템플릿 서류가 영구히 상속된다.
+          # SC2012(ls 대신 find): 실패 경로의 '사람용' 메시지일 뿐이다 — 경로는 바로 위에 리터럴로 열거돼 있어
+          # 글롭도 공백도 없고, 출력을 파싱하지도 않는다. find로 바꾸면 메시지만 길어지고 잡는 회귀는 똑같다.
+          # shellcheck disable=SC2012
           test ! -d scaffold && test ! -f .github/workflows/template-ci.yaml \
             && test ! -d docs && test ! -f CONTEXT.md && test ! -f .bun-version \
             || { echo "::error::자가삭제 누락 — 템플릿 전용 파일이 앱에 남았다: $(ls -d scaffold .github/workflows/template-ci.yaml docs CONTEXT.md .bun-version 2>/dev/null | tr '\n' ' ')"; exit 1; }
+          # 착지 단언 — 위 자가삭제 단언의 대칭짝이다. 저쪽이 '사라져야 할 것'을 못 박는다면, 이쪽은 '앱이 반드시
+          # 받아야 할 것'을 못 박는다. 둘이 같은 이유로 필요하다: 이 파일들이 통째로 빠져도 아래 빌드·스모크·스키마
+          # 검증은 전부 초록이다(이미지는 멀쩡히 돌고, 없는 건 앱 레포의 'CI'뿐이다) — 관측점이 여기밖에 없다.
+          #   pr.yaml      부재 → 앱의 PR이 체크 0개로 되돌아간다(Renovate 범프가 무검사로 머지되던 그 상태 그대로다).
+          #   release.yaml 부재 → main 머지가 GHCR에 아무것도 밀지 않는다(배포가 조용히 멈춘다).
+          # ★열거의 대가: scaffold/common/.github/workflows/에 워크플로를 '추가'하면 이 줄에도 더해라. 빠뜨려도
+          #   CI는 초록이다(이 단언은 없는 걸 못 본다) — 그래서 actionlint 스텝은 열거가 아니라 글롭으로 돈다.
+          for f in .github/workflows/pr.yaml .github/workflows/release.yaml; do
+            test -f "$f" || { echo "::error::착지 누락 — 앱이 반드시 받아야 할 파일이 앱에 없다: $f (scaffold/common/ 아래에 있는가? SELF_DELETE 경로와 겹쳐 스캐폴드 마지막에 함께 지워지지 않았는가?)"; exit 1; }
+          done
         env:
           ARCHETYPE: ${{ matrix.archetype }}
       - name: docker build(frozen-lockfile — 첫 검증, lock 변형 前)
@@ -253,6 +266,30 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: actionlint — 템플릿이 '싣는' 워크플로 + 템플릿 자신의 워크플로
+        # scaffold/common/.github/workflows/* 는 지금껏 어떤 자동 검사도 받지 않았다. 문법이나 표현식이 깨진
+        # 워크플로는 스캐폴드된 앱 '전부'에 실려 나가고, 발견되는 건 앱 레포에서다 — 그 사이 템플릿 CI는 초록이다.
+        # 앱 워크플로는 thin-caller라 아래 스모크처럼 '돌려봐서' 잡을 수도 없다(reusable을 호출하는 게 전부다).
+        # 정적 린트가 유일한 관문이라 여기서 판다 — 싣는 것과 우리 자신을 같은 린터로 함께 본다.
+        # ★서드파티는 SHA/digest로 핀한다(I-7 — 파일 헤더 참조). 액션이 아니라 컨테이너라 digest 핀이고,
+        #   멀티아치 '인덱스' digest다(러너가 arm64 → arm64 매니페스트가 필요하다). 갱신은 수동이다(헤더의 ★ 참조).
+        # ★이 핀은 위/아래 bun 정합 가드의 카운트를 흔들지 않는다: 그 가드가 세는 건 Dockerfile의 `FROM oven/bun:`
+        #   줄과 .bun-version뿐이고, actionlint 컨테이너는 그 어느 쪽도 아니다(setup-bun도 쓰지 않는다).
+        run: |
+          # 대상은 열거하지 않고 글롭으로 잡는다 — 열거였다면 나중에 추가되는 scaffold/common의 워크플로가 조용히
+          # 무검사로 앱까지 실려 나간다(이 스텝의 존재 이유가 바로 그거다). 대신 빈손 글롭 = '아무것도 린트하지 않는
+          # 초록'이라 개수를 못 박는다(bun 핀 추출 가드와 같은 함정·같은 처방).
+          shopt -s nullglob
+          shipped=(scaffold/common/.github/workflows/*.yaml scaffold/common/.github/workflows/*.yml)
+          if [ "${#shipped[@]}" -lt 2 ]; then
+            echo "::error::scaffold/common/.github/workflows/에서 워크플로를 ${#shipped[@]}개만 찾았다(pr·release 최소 2개 기대) — 경로가 바뀌었다면 이 가드도 함께 고쳐라"; exit 1
+          fi
+          printf '%s\n' "${shipped[@]}" | sed 's/^/  린트 대상(싣는 것): /'
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -oneline "${shipped[@]}" .github/workflows/template-ci.yaml \
+            || { echo "::error::actionlint 위반(위 목록) — 싣는 워크플로가 깨지면 스캐폴드된 앱 전부가 그걸 상속한다"; exit 1; }
+          echo "✅ actionlint: 싣는 워크플로 ${#shipped[@]}개 + template-ci.yaml 통과"
       - name: bun 버전 정합 — Dockerfile 4곳이 .bun-version(SSOT)과 같은 버전을 가리키는가
         # bun 버전은 성격이 다른 두 지점에 나타난다: lock을 '재생성'하는 bun(setup-bun)과 --frozen-lockfile로
         # lock을 '강제'하는 bun(Dockerfile의 oven/bun). 둘이 갈라지면 lock 포맷/해석이 어긋나 첫 GHCR 빌드가 깨진다.
@@ -313,5 +350,10 @@ jobs:
       - run: bun install
       - name: strict-parse 네거티브 — 오타 flag·불량 name 거부
         run: |
+          # SC2015(A && B || C는 if-then-else가 아니다): 여기선 '아니면 C'가 정확히 의도다 — cp가 성공하고 그 안의
+          # 단언(`! bun run scaffold …` = 스캐폴더가 반드시 죽어야 한다)이 실패했을 때 CI를 빨갛게 만드는 게 목적이다.
+          # cp 자체가 실패해도 C로 떨어지는데, 그것도 옳다(사본을 못 뜨면 네거티브를 '돌려보지 못한' 것이지 통과가 아니다).
+          # shellcheck disable=SC2015
           cp -r . /tmp/n1 && (cd /tmp/n1 && rm -rf .git && bun install >/dev/null && ! bun run scaffold --no-autodeplpy --yes) || { echo "::error::unknown flag 미거부"; exit 1; }
+          # shellcheck disable=SC2015  # 위와 같은 이유(디렉티브는 '다음 명령' 하나에만 붙는다 — 줄마다 필요하다).
           cp -r . /tmp/n2 && (cd /tmp/n2 && rm -rf .git && bun install >/dev/null && ! bun run scaffold --name Bad_Name --yes) || { echo "::error::불량 name 미거부"; exit 1; }

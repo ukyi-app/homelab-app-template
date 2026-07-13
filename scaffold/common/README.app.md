@@ -33,6 +33,10 @@ bun install
 Dockerfile 게이트 — 관문은 CI 잡이 아니라 이미지 빌드 안에 있다. {{GATES}} 중 하나라도 실패하면
 빌드가 깨져 GHCR에 도달하지 못한다(우회 경로 없음).
 
+그 게이트는 머지 前에 운다 — `pr` 워크플로가 PR마다 **같은 빌드를 push 없이** 돌린다(build-only: GHCR 로그인·
+push·배포 없음). 즉 PR 체크가 빨간색이면 {{GATES}} 중 하나가 깨진 것이고, 초록이면 그 커밋은 이미지로 빌드된다.
+의존성·베이스 이미지 범프(Renovate) PR도 예외가 아니다.
+
 ## 계약
 - `.app-config.yml` = 배포 계약(`kind`/`resources`/`route` 등)
 - 런타임: {{RUNTIME}}
