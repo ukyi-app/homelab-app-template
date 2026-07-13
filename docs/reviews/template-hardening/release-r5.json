@@ -1,0 +1,34 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "release",
+  "verdict": "needs-attention",
+  "summary": "Do not ship yet. The specific String/Symbol.toPrimitive path is closed, but 5322d06 introduces another callable-hook leak through successful allowlisted getters. No critical issue found.",
+  "planFile": "docs/prds/template-hardening.md",
+  "planInDiff": null,
+  "reviewedFileCount": 35,
+  "target": "branch diff against main",
+  "reviewedSha": "9d2541d9805c21710831ec9bf9b3141bcece8d7b",
+  "reviewedTree": "a7d214770f6adb2ba324805be5ace3f158919a84",
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 1,
+  "planFindingCount": 0,
+  "findings": [
+    {
+      "severity": "medium",
+      "title": "Allowlisted reads still execute callable accessors and leak attached credentials",
+      "body": "`field` evaluates `e[key]` even when `e` is a function; the guard handles only accessors that throw, then trusts any returned string. An exact-source before/after probe using a callable with `client.password` and `get message() { return this.client.password; }` showed no getter execution or leak at 1b8bba9, but HEAD executes the getter and logs `SENTINEL_pw` in both API and worker formatters. The redesign therefore replaces R-8's coercion hook with an accessor hook capable of exposing the same attached credential. Tests cover throwing getters and coercion hooks, but not a successful accessor, so the 16-case evidence misses this regression.",
+      "file": "scaffold/archetypes/api/src/db.ts",
+      "line_start": 54,
+      "line_end": 57,
+      "confidence": 0.99,
+      "recommendation": "For functions and other type-only values, return the fixed type label before any field read. If object diagnostics remain, accept only trusted native Error own data properties without invoking accessors or Proxy traps. Add callable `message`/`stack` getter tests for both archetypes asserting the getter never runs and no sentinel is logged.",
+      "isPlanFinding": false
+    }
+  ],
+  "next_steps": [
+    "Close the successful-accessor path in both formatter copies.",
+    "Re-run the API tests, worker hostile-value harness, and five-job template CI at the fix SHA."
+  ]
+}
