@@ -349,6 +349,56 @@ jobs:
             echo "::error::bun 버전 불일치 — lock 재생성 bun(.bun-version) ≠ frozen-lockfile 빌드 bun(oven/bun)이 된다(부분 범프)"; exit 1
           fi
           echo "✅ bun 정합: ${n}곳(Dockerfile ${#dfs[@]} + .bun-version) 모두 $(printf '%s\n' "$pins" | sort -u)"
+      - name: ownString 정합 — 복제된 읽기 규율이 아키타입 간 '한 벌'인가(F-8)
+        # 에러 포매터의 읽기 규율(ownString — 프로퍼티를 데이터 서술자로만 읽어 접근자·Proxy 트랩을 부르지
+        # 않는다)은 worker/src/index.ts와 api/src/db.ts에 '두 벌' 존재한다. 아키타입을 가로지르는 공유 모듈은
+        # 일부러 안 만든다 — 앱엔 아키타입 하나만 복사되므로(그쪽 파일들의 ★ 주석 참조). 그 대가가 드리프트다:
+        # F-7에서 실제로 한쪽(api)만 표가 굳어 유출 구멍이 하나 더 열려 있었고, 그 유출은 HTTP 503 본문으로 나갔다
+        # (파드에 닿는 누구나 curl로 읽는다). 두 본문이 한 글자라도 갈라지면 여기서 죽인다.
+        # ★왜 '표 대조'가 아니라 '본문 동일성'인가 — api는 sink가 둘(로그 + /readyz 503 본문)이라 테스트 표가
+        #   정당하게 다르다(describe 이름부터 다르다). 표의 케이스 이름 집합을 대조하는 가드는 그 정당한 차이를
+        #   오탐하거나, 오탐을 피하려 헐거워져 뮤테이션으로 RED를 못 박지 못한다(이 레포가 받지 않는 가드다).
+        #   대신 '표가 겨누는 코드'를 하나로 묶는다: 본문을 강제 동일화하면 두 복제본은 사실상 한 벌이 되고,
+        #   한쪽(worker)의 포괄 표가 양쪽을 보증한다 — 한쪽만 바꾸면 이 가드가, 양쪽을 똑같이 약화시키면
+        #   그 표가 bun test(Dockerfile 게이트)에서 잡는다. sink별로 다른 포매터(errLine/notReadyBody)는
+        #   공유 단위가 아니라 각자 자기 표로 지킨다 — 그래서 여기서 비교하지 않는다.
+        run: |
+          shopt -s nullglob
+          # 정의를 담은 소스를 '발견'한다(열거 금지) — 새 아키타입이 DB를 얻어 ownString을 복제하면 자동
+          # 편입돼야 한다(열거였다면 그 복제본이 무검사로 드리프트한다). import·주석의 'ownString'은 줄머리 앵커가 뺀다.
+          defs=()
+          for f in scaffold/archetypes/*/src/*.ts; do
+            n=$(grep -cE '^(export )?const ownString = ' "$f" || true)
+            if [ "$n" -gt 1 ]; then
+              echo "::error::${f}에 ownString 정의가 ${n}개 — 한 파일에 하나여야 본문 추출(첫 };까지)이 결정적이다"; exit 1
+            fi
+            [ "$n" -eq 1 ] && defs+=("$f")
+          done
+          # 개수를 못 박는다 — 추출이 빈손이면 '아무것도 비교하지 않는 초록'이 된다(worker+api 최소 2개).
+          if [ "${#defs[@]}" -lt 2 ]; then
+            echo "::error::ownString 정의를 ${#defs[@]}개만 찾았다(worker·api 최소 2개 기대) — 경로/선언 형태가 바뀌었다면 이 가드도 함께 고쳐라"; exit 1
+          fi
+          printf '%s\n' "${defs[@]}" | sed 's/^/  ownString 정의: /'
+          hashes=()
+          for f in "${defs[@]}"; do
+            # CRLF는 awk '전에' 벗긴다 — .gitattributes가 없어 한 파일이 CRLF로 커밋되면 줄이 '};\r'가 되어
+            # 앵커(^};$)가 빗나가고 awk가 터미네이터를 못 찾아 파일 끝까지 흘러간다(추출 오염). 그다음 export만 지운다.
+            # 본문엔 주석이 없다(WHY는 전부 함수 위에 산다) — 정규화는 export 하나면 충분하고, 공백 한 칸의 드리프트도 잡는다.
+            body=$(tr -d '\r' < "$f" | awk '/^(export )?const ownString = /{f=1} f{print} f&&/^};$/{exit}' | sed '1s/^export //')
+            # 추출 무결성 — 본문의 화살표-블록('=> {')은 정확히 하나(ownString 시그니처)여야 하고 마지막 줄은 '};'여야
+            # 한다(터미네이터를 실제로 만났다는 증거). 닫는 '};'가 사라지거나 형태가 바뀌어 추출이 다음 함수(errLine)까지
+            # 넘치면 여기서 잡는다 — '추출이 깨졌다'를 아래 '본문이 갈라졌다'(sort -u)와 갈라 오진을 막는다(divergence의
+            # 실제 판정자는 sort -u다; 이 검사는 그 판정이 온전한 본문 위에서 이뤄지도록 보장한다).
+            arrowblocks=$(printf '%s\n' "$body" | grep -c '=> {' || true)
+            if [ "$arrowblocks" -ne 1 ] || [ "$(printf '%s\n' "$body" | tail -n1)" != "};" ]; then
+              echo "::error::${f}의 ownString 본문 추출이 어긋났다(화살표블록 ${arrowblocks}개[기대 1], 마지막 줄 '$(printf '%s\n' "$body" | tail -n1)'[기대 };]) — 닫는 '};'가 사라졌거나 선언 형태가 바뀌었다. 본문 비교가 아니라 추출부터 고쳐라"; exit 1
+            fi
+            hashes+=("$(printf '%s' "$body" | shasum | cut -d' ' -f1)")
+          done
+          if [ "$(printf '%s\n' "${hashes[@]}" | sort -u | wc -l | tr -d ' ')" -ne 1 ]; then
+            echo "::error::ownString 본문이 아키타입 간 갈라졌다(${defs[*]}) — 읽기 규율(접근자·Proxy 트랩 미호출)은 아키타입마다 복제되지만 '한 벌'이어야 한다. 한쪽을 고쳤다면 나머지도 같은 편집을 반영해라(F-8: F-7에서 실제로 한쪽만 굳어 503 본문 유출 구멍이 열렸다)"; exit 1
+          fi
+          echo "✅ ownString 본문 정합: ${#defs[@]}곳(${defs[*]}) 동일($(printf '%s\n' "${hashes[@]}" | sort -u))"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           # 숫자를 여기 박지 않는다 — 위 가드가 이 배선(.bun-version 단일 SSOT)을 강제한다.
