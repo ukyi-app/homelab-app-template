@@ -75,6 +75,14 @@ export function createRuntimePool(): Pool | null {
 // ★try가 남는 이유 — Proxy는 getOwnPropertyDescriptor 훅 자체를 가로채 던질 수 있다.
 // ★실측(Bun) — native Error의 message·stack은 own *데이터* 프로퍼티다(stack은 프로토타입도 접근자도 아니다).
 //   code는 pg가 own 데이터로 매단다(57P01·ECONNRESET). 그래서 이 규율로도 진단이 죽지 않는다.
+// ★데이터 서술자라고 다 문자열은 아니다 — reject({ message: { toString: () => password } })의 message는
+//   접근자가 아니라 own *데이터*다(값이 객체일 뿐). 문자열 검사를 빼면 그 객체가 그대로 포매터의 템플릿
+//   보간에 실려 toString·valueOf·Symbol.toPrimitive가 돈다 — 접근자를 막고도 같은 구멍이 다시 열린다.
+//   싱크가 로그만이 아니라서 더 아프다: notReadyBody(index.ts)를 타면 그 반환값이 /readyz 503 본문으로
+//   네트워크에 나간다. 그래서 문자열 검사가 own 데이터와 보간 사이의 마지막 관문이다(표가 이걸 고정한다).
+// ★unknown으로 한 번 받는 이유 — PropertyDescriptor.value는 any다. any에 건 typeof는 컴파일러에겐
+//   아무것도 좁히지 않는 참이라 `string | undefined`라는 반환 타입이 거짓말이 되고, 검사를 지워도 tsc는
+//   조용하다. unknown으로 받으면 typeof가 진짜 내로잉이 된다 — 검사를 지우는 순간 타입체크부터 빨개진다.
 // ★내보내는 이유 — 이 아키타입 안에서 읽기 규율의 구현은 여기 하나뿐이어야 한다. index.ts(/readyz 503 본문)도
 //   이걸 import한다. 복제해 두면 한쪽만 굳고(다섯 라운드: 객체 펼침 → 강제변환 훅 → 던지는 접근자 → 성공하는
 //   접근자) 손대지 않은 쪽에서 그 구멍이 조용히 다시 열린다. 반대로 아키타입을 *가로지르는* 공유 모듈은 만들지
@@ -83,7 +91,9 @@ export function createRuntimePool(): Pool | null {
 export const ownString = (o: object, key: "code" | "message" | "stack"): string | undefined => {
   try {
     const d = Object.getOwnPropertyDescriptor(o, key);
-    return d && Object.hasOwn(d, "value") && typeof d.value === "string" ? d.value : undefined;
+    if (!d || !Object.hasOwn(d, "value")) return undefined;
+    const v: unknown = d.value;
+    return typeof v === "string" ? v : undefined;
   } catch {
     return undefined;
   }

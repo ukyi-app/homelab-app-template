@@ -182,6 +182,66 @@ describe("readiness 503 본문 격리", () => {
     expect(body).not.toContain("src/index.ts");
     expect(body).not.toContain("at ");
   });
+
+  test("own '데이터'라도 문자열이 아니면 본문에 보간되지 않는다 — 값에 매달린 훅이 돌지 않는다", async () => {
+    // 접근자를 거절하고도 남는 구멍이다: { message: { toString: () => password } }의 message는 접근자가 아니라
+    // own *데이터*다(값이 객체일 뿐). 서술자 규율을 그대로 통과하므로 ownString의 문자열 검사가 마지막 관문이고,
+    // 그게 빠지면 그 객체가 본문의 템플릿 보간에 실려 훅이 돈다 — 로그보다 이쪽이 아프다: 이 싱크는 HTTP다.
+    let hookRan = false;
+    const leak = () => {
+      hookRan = true;
+      return "SENTINEL_pw";
+    };
+    const cases: [unknown, string][] = [
+      [{ message: { toString: leak } }, "object"], // 보간(ToString)이 toString을 부른다
+      [{ message: { [Symbol.toPrimitive]: leak } }, "object"], // toString보다 먼저 불린다
+      [{ message: Object.assign(Object.create(null), { valueOf: leak }) }, "object"], // toString이 *없어야* valueOf까지 내려간다
+      [Object.assign(new Error("pooler down"), { code: { toString: leak } }), "pooler down"], // pg가 code를 own 데이터로 매다는 자리 — code는 거절, message는 살아남는다
+    ];
+
+    for (const [value, expected] of cases) {
+      const res = await get(inject(rejecting(value)), "/readyz");
+
+      expect(res.status).toBe(503); // 계약은 그대로
+      const body = await res.text();
+      expect(body).toContain(expected); // 값 대신 타입(또는 살아남은 own 데이터 문자열)
+      expect(body).not.toContain("SENTINEL"); // ★훅 반환값도 매달린 자격증명도 네트워크로 나가지 않는다
+    }
+
+    expect(hookRan).toBe(false); // ★핵심 — 남의 코드는 한 줄도 돌지 않았다.
+  });
+
+  test("Object.prototype.value가 오염돼도 접근자 서술자는 거절된다", async () => {
+    // db.ts가 hasOwn을 쓰는 이유가 여기 있는데 그걸 고정하는 테스트가 이 아키타입엔 없었다(worker에만 있었다).
+    // `"value" in d`였다면 무너진다: 서술자의 프로토타입은 Object.prototype이라 오염된 getter가 in을 true로
+    // 만들고, 이어지는 d.value가 *그 상속 getter*를 부른다 — 접근자 서술자를 데이터인 척 통과시키는 우회로다.
+    // 그 결과가 그대로 503 본문이 되어 네트워크로 나간다(로그보다 아프다).
+    let polluted = false;
+    const hostile = { client: { password: "SENTINEL_pw" } };
+    Object.defineProperty(hostile, "message", { get: () => "SENTINEL_pw" }); // 성공하는 getter
+
+    let body: string;
+    let status: number;
+    try {
+      Object.defineProperty(Object.prototype, "value", {
+        configurable: true,
+        get() {
+          polluted = true;
+          return "SENTINEL_pw";
+        },
+      });
+      const res = await get(inject(rejecting(hostile)), "/readyz");
+      status = res.status;
+      body = await res.text();
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "value"); // 오염 창을 최소로 — 테스트 러너까지 물들이지 않는다
+    }
+
+    expect(polluted).toBe(false); // ★상속된 getter조차 부르지 않았다
+    expect(status).toBe(503);
+    expect(body).not.toContain("SENTINEL_pw");
+    expect(body).toContain("object"); // 값 대신 타입
+  });
 });
 
 describe("pg 풀 오류 격리", () => {
@@ -400,6 +460,14 @@ describe("pg 풀 오류 격리", () => {
       [withGetter({ message: "benign message" }, "code"), "benign message"], // code는 거절, message는 살아남는다.
       [withGetter({ message: "benign message" }, "stack"), "benign message"], // stack은 거절, message로 떨어진다.
       [new Proxy({ client: { password: "SENTINEL_pw" } }, { get: () => leak() }), "object"], // get 트랩은 돌지 않는다.
+      // 아래 5줄 — own '데이터'인데 값이 문자열이 아닌 경우다. 접근자가 아니라서 서술자 규율(hasOwn(d,"value"))을
+      // 그대로 통과한다 — ownString의 문자열 검사가 own 데이터와 보간 사이의 유일한 관문이고, 그게 빠지면
+      // 이 객체들이 포매터의 템플릿에 그대로 실려 매달린 훅이 돈다(=부르지 않기로 한 바로 그 남의 코드).
+      [{ message: { toString: leak } }, "object"], // 보간(ToString)이 toString을 부른다
+      [{ message: { [Symbol.toPrimitive]: leak } }, "object"], // toString보다 먼저 불린다(ToPrimitive의 첫 관문)
+      [{ message: Object.assign(Object.create(null), { valueOf: leak }) }, "object"], // toString이 *없어야* valueOf까지 내려간다(있으면 "[object Object]"에서 멈춘다)
+      [{ stack: { toString: leak }, message: "benign stack shadow" }, "benign stack shadow"], // stack이 먼저 읽히는 자리 — 거절되고 message로 떨어진다
+      [Object.assign(new Error("own data code"), { code: { toString: leak } }), "own data code"], // pg가 code를 own 데이터로 매다는 바로 그 자리
       [new Error("native error message"), "native error message"], // ★진단 보존 — own 데이터 문자열은 그대로 나온다.
     ];
 
