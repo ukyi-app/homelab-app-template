@@ -1,8 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": [
+    "config:recommended"
+  ],
   "timezone": "Asia/Seoul",
-  "schedule": ["* 0-6 * * 1"],
+  "schedule": [
+    "* 0-6 * * 1"
+  ],
   "pinDigests": true,
   "automerge": false,
   "bun-version": {
@@ -36,8 +40,12 @@
         "값 정규식이 앵커(^…$)로 파일 전체를 잡는 이유: .bun-version은 '버전 한 줄'이 계약이다(주석·여분 줄 금지).",
         "형식이 깨지면 dep이 0개가 되어 조용히 갱신이 멈추므로, template-ci의 정합 가드가 그 한 줄 형식을 단언한다."
       ],
-      "managerFilePatterns": ["/^\\.bun-version$/"],
-      "matchStrings": ["^(?<currentValue>\\d[^\\s#]*)\\s*$"],
+      "managerFilePatterns": [
+        "/^\\.bun-version$/"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>\\d[^\\s#]*)\\s*$"
+      ],
       "depNameTemplate": "oven/bun",
       "datasourceTemplate": "docker"
     }
@@ -49,8 +57,12 @@
         "레드이므로, 애초에 갈라진 브랜치가 만들어지지 않게 한다. 다섯 지점 모두 Renovate가 push 가능한 경로다",
         "(.github/workflows/* 는 이 그룹에 없다 — 그래서 이 PR은 workflows:write 없이도 그대로 push된다)."
       ],
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["oven/bun"],
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "oven/bun"
+      ],
       "groupName": "bun"
     },
     {
@@ -61,10 +73,45 @@
         "Dockerfile의 FROM은 digest를 그대로 받아야 하므로, dep·datasource·매니저로 좁히면 Dockerfile 쪽까지 함께 꺼진다.",
         "Dockerfile에 digest가 붙어도 정합 가드는 태그 부분만 비교하므로 레드가 되지 않는다(실측 확인)."
       ],
-      "matchFileNames": [".bun-version"],
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["oven/bun"],
+      "matchFileNames": [
+        ".bun-version"
+      ],
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "oven/bun"
+      ],
       "pinDigests": false
     }
-  ]
+  ],
+  "rangeStrategy": "bump",
+  "lockFileMaintenance": {
+    "description": [
+      "bun.lock의 in-range 갱신은 이 둘(rangeStrategy=bump + lockFileMaintenance)이 없으면 아예 흐르지 않는다 — 실측:",
+      "이 레포의 package.json이 `yaml: ^2.4.0`이고 bun.lock이 2.9.0에 묶여 있어도(범위 안) 기본값에선 브랜치가 안 만들어진다.",
+      "npm 매니저의 lockfile-only 갱신 경로를 bun 매니저는 구현하지 않기 때문이다 → 캐럿 범위 의존의 보안 패치가 영구 정체한다.",
+      "(scaffold/common/renovate.json이 생성 앱에 대해 같은 이유로 같은 설정을 쓴다 — 템플릿 자신만 빠져 있었다.)",
+      "schedule을 명시하는 이유: 이 객체의 기본 schedule은 'before 4am on monday'인데 homelab의 Renovate cron은",
+      "월 04:00 KST에 딱 한 번 돈다 — 기본값이면 창을 1분 차이로 놓쳐 영영 실행되지 않는다."
+    ],
+    "enabled": true,
+    "schedule": [
+      "* 0-6 * * 1"
+    ]
+  },
+  "github-actions": {
+    "description": [
+      "비활성 — 두 이유가 각각 독립적으로 이 매니저를 막는다(실측으로 둘 다 확인).",
+      "(1) 토큰: homelab의 Renovate는 writer App 토큰(Contents+PR+Issues write)으로 돈다. workflows:write가 없어",
+      "    .github/workflows/* 를 건드리는 push는 GitHub가 거부한다. 켜두면 template-ci.yaml의 액션 SHA 핀을 갱신하려는",
+      "    PR(renovate/actions-checkout-7.x)이 매주 만들어졌다가 push에서 죽는다. SHA 핀 갱신은 수동이다(I-7 결정).",
+      "(2) 정책: 이 매니저는 scaffold/common/.github/workflows/release.yaml도 잡는다 — 그건 이 레포의 워크플로가 아니라",
+      "    '생성 앱에 실려갈 템플릿 자산'이다. 거기 있는 `ukyi-app/homelab/.../reusable-app-build.yaml@main`을 SHA로 핀하면",
+      "    (pinDigests가 액션에도 적용된다) 빌드 로직 SSOT를 main으로 따라간다는 설계가 깨지고, 모든 생성 앱이 스냅샷에",
+      "    얼어붙는다. 실측: 켜면 `ukyi-app/homelab → main`이 갱신 후보로 잡힌다.",
+      "토큰에 workflows:write를 부여하면(homelab Phase-0) (1)은 풀리지만 (2)는 남는다 — 그때도 scaffold/common은 제외해야 한다."
+    ],
+    "enabled": false
+  }
 }
