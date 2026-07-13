@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "release",
+  "verdict": "approve",
+  "summary": "현재 핵심 검증점은 descriptor 조회 자체입니다. 데이터 descriptor만 수용하더라도 Proxy의 `getOwnPropertyDescriptor` trap이 실행되거나 합성 descriptor를 반환할 수 있으므로, 이 경로가 두 sink에서 실제 실행·유출·예외로 이어지는지 정확한 소스로 재현하겠습니다.",
+  "planFile": "docs/prds/template-hardening.md",
+  "planInDiff": null,
+  "reviewedFileCount": 36,
+  "target": "branch diff against main",
+  "reviewedSha": "4389eeb33a92c3426cc8f5bd695d241ea515a6d3",
+  "reviewedTree": "286d19a5e5f6eec71d5759a4ca7ea5d5e439d315",
+  "codexStatus": 1,
+  "parseError": null,
+  "findingCount": 0,
+  "planFindingCount": 0,
+  "findings": [],
+  "next_steps": []
+}
