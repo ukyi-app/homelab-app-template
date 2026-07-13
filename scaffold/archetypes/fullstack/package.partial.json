@@ -1,10 +1,12 @@
 {
   "scripts": {
+    "dev": "concurrently --kill-others -n server,web -c blue,magenta \"bun --watch src/index.ts\" \"vite\"",
     "dev:web": "vite",
     "dev:server": "bun --watch src/index.ts",
     "build:web": "vite build",
     "build": "vite build && bun build --compile --target=bun-linux-arm64 src/index.ts --outfile app",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "hono": "^4.6.0",
@@ -12,6 +14,7 @@
     "react-dom": "^18.3.0"
   },
   "devDependencies": {
+    "concurrently": "^9.1.0",
     "vite": "^5.4.0",
     "@vitejs/plugin-react": "^4.3.0",
     "@types/react": "^18.3.0",

@@ -1,0 +1,46 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "release",
+  "verdict": "needs-attention",
+  "summary": "Do not ship: R-2 still has a silent data-loss path. R-1 and R-3 are substantiated; R-4 prevents raw-object logging but introduces an uncovered worker-crash case.",
+  "planFile": "docs/prds/template-hardening.md",
+  "planInDiff": null,
+  "reviewedFileCount": 32,
+  "target": "branch diff against main",
+  "reviewedSha": "a63257da299a57f1ddbfbc53ad6bbda65a74e7bc",
+  "reviewedTree": "287d61ee1c3cb856d1ee73362887d3f949837f2e",
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 2,
+  "planFindingCount": 0,
+  "findings": [
+    {
+      "severity": "high",
+      "title": "R-2 guard exempts ignored user files from protection",
+      "body": "The guard adds every ignored untracked path to `shipped`, excluding it from `mine` before the later recursive deletion of `SELF_DELETE`. `--exclude-standard` includes repository and global ignore rules, and this repo ignores `.env`, `.env.*`, `*.local`, and `node_modules/`. Consequently, a user-created `docs/notes.local` or `docs/.env` absent from the initial tree passes preflight and is silently deleted with `docs/`. The committed evidence tests only nonignored `docs/my-notes.md`, so it misses this bypass.",
+      "file": "scaffold/scaffold.ts",
+      "line_start": 289,
+      "line_end": 290,
+      "confidence": 0.99,
+      "recommendation": "Treat every path absent from the initial tree as user-owned regardless of ignore status. If necessary, narrowly allowlist explicitly disposable metadata, then add a red-green test using an ignored sentinel and assert failure occurs before mutation.",
+      "isPlanFinding": false
+    },
+    {
+      "severity": "medium",
+      "title": "R-4 sanitizer crashes on nullish thrown values",
+      "body": "The type assertion does not validate `e` at runtime. An empty rejection such as `await Promise.reject()` or `throw null` makes the destructuring itself throw inside the catch, so the worker exits instead of logging and backing off. Fresh Bun evaluation reproduced the TypeError for both null and undefined. Verification covers only an Error object with a string code, and the worker smoke never executes this catch path.",
+      "file": "scaffold/archetypes/worker/src/index.ts",
+      "line_start": 45,
+      "line_end": 46,
+      "confidence": 0.99,
+      "recommendation": "Normalize unknown thrown values with null/type guards before reading allowlisted primitive fields, and add null/undefined cases alongside the credential-sentinel verification.",
+      "isPlanFinding": false
+    }
+  ],
+  "next_steps": [
+    "Close the ignored-file data-loss bypass and add its regression test.",
+    "Make worker error normalization safe for all unknown thrown values.",
+    "Re-run the affected verification and template-ci after the fixes."
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "release",
+  "verdict": "needs-attention",
+  "summary": "R-5’s ignored-file bypass and R-6’s nullish cases are fixed, and CI run 29197329127 is green at 6a801be. One medium R-6 failure path remains; no new critical issue was found.",
+  "planFile": "docs/prds/template-hardening.md",
+  "planInDiff": null,
+  "reviewedFileCount": 33,
+  "target": "branch diff against main",
+  "reviewedSha": "3e3c80bb3bce3bfb5772a63af2f11674a186fbe2",
+  "reviewedTree": "f9a4c4bab0ccfb7459f9ff3e10378f730ea36fad",
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 1,
+  "planFindingCount": 0,
+  "findings": [
+    {
+      "severity": "medium",
+      "title": "R-6 sanitizer can still throw while inspecting an error",
+      "body": "The sanitizer directly reads `code`, `stack`, and `message`, which can invoke arbitrary getters or Proxy traps. Because this occurs inside the catch block, a throwing accessor escapes before backoff and terminates the worker. Fresh Bun evaluation of the exact logic with a throwing `code` getter reproduced the failure. The committed evidence covers plain Error, primitive, and nullish values but not accessor-backed error objects.",
+      "file": "scaffold/archetypes/worker/src/index.ts",
+      "line_start": 51,
+      "line_end": 52,
+      "confidence": 0.98,
+      "recommendation": "Put all property access and coercion inside a non-throwing formatter with its own try/catch and a constant fallback. Add a red-green case using a throwing getter or revoked Proxy and assert the worker remains alive and backs off.",
+      "isPlanFinding": false
+    }
+  ],
+  "next_steps": [
+    "Harden the worker formatter against accessor and Proxy failures, then refresh the targeted evidence."
+  ]
+}

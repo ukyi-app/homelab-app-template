@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "release",
+  "verdict": "needs-attention",
+  "summary": "The focused probe has falsified the key residual assumption: a live Proxy can execute its getOwnPropertyDescriptor trap and return an own data descriptor containing an attached password; the current helper accepts and emits it. I’m checking this against both sinks and the committed test matrix before final severity calibration.",
+  "planFile": "docs/prds/template-hardening.md",
+  "planInDiff": null,
+  "reviewedFileCount": 7,
+  "target": "branch diff against 9d2541d",
+  "reviewedSha": "107e56f190356227f037f3edd90233cc2a8cc21c",
+  "reviewedTree": "4f4bfcd31f82b01d9334bfbe73d2ac120ee14902",
+  "codexStatus": 1,
+  "parseError": null,
+  "findingCount": 0,
+  "planFindingCount": 0,
+  "findings": [],
+  "next_steps": []
+}

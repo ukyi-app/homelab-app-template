@@ -1,0 +1,69 @@
+{
+  "ok": true,
+  "status": "ok",
+  "kind": "release",
+  "verdict": "needs-attention",
+  "summary": "Do not ship. The allowed name-mismatch path still creates a secret that onboarding rejects; document cleanup is too late for history and can delete user content; and the central CI rewrite has never run on its target runner.",
+  "planFile": "docs/prds/template-hardening.md",
+  "planInDiff": null,
+  "reviewedFileCount": 32,
+  "target": "branch diff against main",
+  "reviewedSha": "8fe562d7c73dfbe1330b52b0872498362837ef15",
+  "reviewedTree": "86c1147ba89af266436a23ee52aacec03e203639",
+  "codexStatus": 0,
+  "parseError": null,
+  "findingCount": 4,
+  "planFindingCount": 0,
+  "findings": [
+    {
+      "severity": "high",
+      "title": "Non-authoritative --name still controls the deployment secret",
+      "body": "The scaffold explicitly warns that a value differing from the origin-derived name is not the deployment identity, but then bakes that same value into `secret:seal`. With origin `real-name` and `--name ci-api`, sealing produces `ci-api-secrets` while create-app requires `real-name-secrets`. This violates ADR-0002 and the PRD’s sealing requirement. The verification splits origin mismatch and sealing into separate fixtures, so it tests the wrong identity source.",
+      "file": "scaffold/scaffold.ts",
+      "line_start": 315,
+      "line_end": 318,
+      "confidence": 0.99,
+      "recommendation": "Track a separately validated deployment name derived from origin/fallback and use it for `--app`. Add an origin `real-name` plus explicit `ci-api` integration test asserting `real-name-secrets`; keep the warning/display name behavior separate.",
+      "isPlanFinding": false
+    },
+    {
+      "severity": "high",
+      "title": "I-8 cleanup is too late for history and too broad for user data",
+      "body": "Deleting `docs/` and `CONTEXT.md` after scaffolding only adds a deletion commit; repositories created from this template already contain those files in their initial commit, so the issue’s stated commit-history contamination remains. The same recursive deletion silently removes any app-owned files added under root `docs/` before scaffolding. Verification checks only the final filesystem and therefore misses both the historical leak and pre-existing-content loss.",
+      "file": "scaffold/scaffold.ts",
+      "line_start": 329,
+      "line_end": 333,
+      "confidence": 0.97,
+      "recommendation": "Generate apps from a clean distribution branch/tree that never contains template-only documents, or explicitly rewrite the initial commit with a clean-worktree guard. Fail before mutation when deletion targets contain unknown files, and verify both history absence and sentinel-file preservation.",
+      "isPlanFinding": false
+    },
+    {
+      "severity": "high",
+      "title": "Missing verification: template-ci never ran on GitHub Actions",
+      "body": "The evidence admits that only extracted `run:` blocks were executed locally. That does not exercise action inputs, matrix/condition/environment wiring, working-directory behavior, Docker availability, network access, or the `ubuntu-24.04-arm` runner. This leaves I-7’s explicit “CI is green” acceptance criterion unproven for the largest operational change in the branch.",
+      "file": "docs/reviews/template-hardening/verification.md",
+      "line_start": 212,
+      "line_end": 214,
+      "confidence": 0.99,
+      "recommendation": "Run the branch workflow on GitHub Actions and require green results for all four archetype matrix jobs plus `scaffold-args`. Record the run URL, reviewed SHA, and job outcomes in the committed verification evidence.",
+      "isPlanFinding": false
+    },
+    {
+      "severity": "medium",
+      "title": "Worker failure handling reintroduces raw error-object logging",
+      "body": "The new catch passes arbitrary `e` directly to `console.error`. This branch’s own `db.ts` documents a reproduced Bun behavior where inspecting an error object expands an attached client and prints its database password. Once the worker TODO is replaced with real SDK or database work, attached credentials, request data, or PII can reach centralized logs. The committed verification never triggers this catch path.",
+      "file": "scaffold/archetypes/worker/src/index.ts",
+      "line_start": 39,
+      "line_end": 42,
+      "confidence": 0.9,
+      "recommendation": "Log a sanitized string or allowlisted primitive fields rather than the object. Add a regression test using an error with an attached sentinel credential and assert the credential is absent while message/code and backoff behavior remain observable.",
+      "isPlanFinding": false
+    }
+  ],
+  "next_steps": [
+    "Separate deployment identity from the optional display/package name and add the crossed mismatch-plus-sealing test.",
+    "Replace post-generation document deletion with a history-clean distribution mechanism and add preservation tests.",
+    "Obtain a green GitHub Actions run for the complete workflow and refresh verification evidence.",
+    "Sanitize worker error logging and exercise its failure path."
+  ]
+}
