@@ -2,6 +2,7 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "build": "bun build --compile --target=bun-linux-arm64 src/index.ts --outfile app",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   }
 }

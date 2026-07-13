@@ -119,11 +119,12 @@ const DOC: Record<Arch, { runtime: string; gates: string[]; cmds: string[]; note
   },
   worker: {
     runtime: "arm64 distroless non-root — **HTTP를 서빙하지 않는다**(포트·route·probe 없음). SIGTERM을 받으면 진행 중인 주기를 접고 스스로 종료한다.",
-    gates: ["typecheck", "build"],
+    gates: ["typecheck", "test", "build"],
     cmds: [
       "bun run dev        # 워커 루프 (--watch 리로드)",
       "bun run build      # 단일 바이너리 app",
       "bun run typecheck",
+      "bun run test",
     ],
     note: [
       "HTTP가 없으니 확인은 stdout 로그(`tick ...`)로 한다. Ctrl-C(SIGINT)에 바로 멈추는지도 여기서 본다 —",

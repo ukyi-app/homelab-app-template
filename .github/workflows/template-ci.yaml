@@ -28,6 +28,11 @@ defaults:
 jobs:
   scaffold-build:
     runs-on: ubuntu-24.04-arm
+    # ★행(hang)은 실패로 끝나야 한다 — 기본값 360분은 '실패'가 아니라 '방치'다. 워커의 import.meta.main
+    #   가드가 빠지면 import만으로 루프가 돌아 `bun test`가 영영 끝나지 않는다(빌드는 결국 빨개지지만 그
+    #   전에 6시간을 태운다). 여유는 크게 잡는다 — 현재 잡은 ~35s이고, 캐시 미스·GHCR 지연이 겹쳐도
+    #   10분이면 정상 실행이 걸릴 일이 없다. 여기서 걸린다면 그건 느린 게 아니라 멈춘 것이다.
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -264,6 +269,7 @@ jobs:
         run: docker run --rm -i hadolint/hadolint < /tmp/app/Dockerfile || true
   scaffold-args:
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10 # 위 잡과 같은 이유·같은 값(현재 ~15s) — 기본 360분을 태우지 않는다.
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: actionlint — 템플릿이 '싣는' 워크플로 + 템플릿 자신의 워크플로
