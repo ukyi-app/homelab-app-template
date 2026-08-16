@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 FROM oven/bun:1.3.14 AS build
 WORKDIR /app
 COPY package.json bun.lock* ./
@@ -12,7 +12,7 @@ RUN bun run typecheck
 RUN bun run test
 RUN bun run build
 
-FROM gcr.io/distroless/base-debian12:nonroot
+FROM gcr.io/distroless/base-debian12:nonroot@sha256:b12529fbbd0bb15eea8905f69d83148679e0b4d7d434c8808100792029b1caae
 WORKDIR /app
 COPY --from=build /app/app /app/app
 COPY --from=build /app/web/dist /app/web/dist
