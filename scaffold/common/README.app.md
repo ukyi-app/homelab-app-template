@@ -26,7 +26,7 @@ bun install
 {{SECRET_NOTE}}
 
 ## 배포
-1. `main`에 push → GitHub Actions가 GHCR에 arm64 이미지 빌드·push
+1. `main`에 push → GitHub Actions가 GHCR에 멀티아치(amd64+arm64) 이미지 빌드·push
 2. owner가 homelab에서 `create-app` 디스패치 → 첫 배포 🚀
 3. 이후 main 머지마다 homelab GHCR 폴링이 자동 배포(autoDeploy 시)
 
