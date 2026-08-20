@@ -39,11 +39,11 @@ const NO_DB_ENV = [
 // cmds·gates가 package.partial.json·Dockerfile과 어긋나면 아래 가드가 스캐폴드를 죽인다(주석으로 부탁하지 않는다).
 const DOC: Record<Arch, { runtime: string; gates: string[]; cmds: string[]; note: string[]; secret: string; env: string[] }> = {
   fullstack: {
-    runtime: "arm64 distroless non-root — 하나의 Hono 프로세스가 API와 빌드된 SPA(`web/dist`)를 http `:8080`으로 서빙한다. metrics `:9090`은 `.app-config.yml`에 `metrics.enabled=true`일 때만 수집된다.",
+    runtime: "멀티아치(amd64+arm64) distroless non-root — 하나의 Hono 프로세스가 API와 빌드된 SPA(`web/dist`)를 http `:8080`으로 서빙한다. metrics `:9090`은 `.app-config.yml`에 `metrics.enabled=true`일 때만 수집된다.",
     gates: ["typecheck", "test", "build"],
     cmds: [
       "bun run dev        # 서버(:8080) + 웹 dev 서버(:5173) 동시 기동",
-      "BUN_COMPILE_TARGET=bun-linux-x64 bun run build  # web/dist(vite) + 단일 바이너리 app(타깃은 Dockerfile이 TARGETARCH에서 주입 — 로컬은 x64/arm64 명시)",
+      "BUN_COMPILE_TARGET=bun-linux-<x64|arm64> bun run build  # web/dist(vite) + 단일 바이너리 app(자기 아치를 명시 — 이미지 빌드는 Dockerfile이 TARGETARCH에서 주입)",
       "bun run typecheck",
       "bun run test",
     ],
@@ -58,11 +58,11 @@ const DOC: Record<Arch, { runtime: string; gates: string[]; cmds: string[]; note
     env: NO_DB_ENV,
   },
   api: {
-    runtime: "arm64 distroless non-root — Hono가 http `:8080`. metrics `:9090`은 `.app-config.yml`에 `metrics.enabled=true`일 때만 수집된다.",
+    runtime: "멀티아치(amd64+arm64) distroless non-root — Hono가 http `:8080`. metrics `:9090`은 `.app-config.yml`에 `metrics.enabled=true`일 때만 수집된다.",
     gates: ["typecheck", "test", "build"],
     cmds: [
       "bun run dev        # Hono :8080 (--watch 리로드)",
-      "BUN_COMPILE_TARGET=bun-linux-x64 bun run build  # 단일 바이너리 app(타깃은 Dockerfile이 TARGETARCH에서 주입 — 로컬은 x64/arm64 명시)",
+      "BUN_COMPILE_TARGET=bun-linux-<x64|arm64> bun run build  # 단일 바이너리 app(자기 아치를 명시 — 이미지 빌드는 Dockerfile이 TARGETARCH에서 주입)",
       "bun run typecheck",
       "bun run test",
     ],
@@ -103,7 +103,7 @@ const DOC: Record<Arch, { runtime: string; gates: string[]; cmds: string[]; note
     ],
   },
   site: {
-    runtime: "arm64 static-web-server 이미지(scratch 기반 — **distroless가 아니다**). 앱 코드는 돌지 않고 `web/dist` 정적 산출물만 서빙한다. 서버 인자는 homelab 차트가 주입한다(목록은 `Dockerfile` 주석) — http는 `:8080`이고, non-root는 파드 securityContext가 강제한다. metrics 없음.",
+    runtime: "멀티아치(amd64+arm64) static-web-server 이미지(scratch 기반 — **distroless가 아니다**). 앱 코드는 돌지 않고 `web/dist` 정적 산출물만 서빙한다. 서버 인자는 homelab 차트가 주입한다(목록은 `Dockerfile` 주석) — http는 `:8080`이고, non-root는 파드 securityContext가 강제한다. metrics 없음.",
     gates: ["typecheck", "build"],
     cmds: [
       "bun run dev        # vite dev 서버 :5173 (HMR)",
@@ -118,11 +118,11 @@ const DOC: Record<Arch, { runtime: string; gates: string[]; cmds: string[]; note
     env: NO_DB_ENV,
   },
   worker: {
-    runtime: "arm64 distroless non-root — **HTTP를 서빙하지 않는다**(포트·route·probe 없음). SIGTERM을 받으면 진행 중인 주기를 접고 스스로 종료한다.",
+    runtime: "멀티아치(amd64+arm64) distroless non-root — **HTTP를 서빙하지 않는다**(포트·route·probe 없음). SIGTERM을 받으면 진행 중인 주기를 접고 스스로 종료한다.",
     gates: ["typecheck", "test", "build"],
     cmds: [
       "bun run dev        # 워커 루프 (--watch 리로드)",
-      "BUN_COMPILE_TARGET=bun-linux-x64 bun run build  # 단일 바이너리 app(타깃은 Dockerfile이 TARGETARCH에서 주입 — 로컬은 x64/arm64 명시)",
+      "BUN_COMPILE_TARGET=bun-linux-<x64|arm64> bun run build  # 단일 바이너리 app(자기 아치를 명시 — 이미지 빌드는 Dockerfile이 TARGETARCH에서 주입)",
       "bun run typecheck",
       "bun run test",
     ],
