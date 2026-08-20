@@ -43,7 +43,7 @@ const DOC: Record<Arch, { runtime: string; gates: string[]; cmds: string[]; note
     gates: ["typecheck", "test", "build"],
     cmds: [
       "bun run dev        # 서버(:8080) + 웹 dev 서버(:5173) 동시 기동",
-      "bun run build      # web/dist(vite) + 단일 바이너리 app",
+      "BUN_COMPILE_TARGET=bun-linux-x64 bun run build  # web/dist(vite) + 단일 바이너리 app(타깃은 Dockerfile이 TARGETARCH에서 주입 — 로컬은 x64/arm64 명시)",
       "bun run typecheck",
       "bun run test",
     ],
@@ -62,7 +62,7 @@ const DOC: Record<Arch, { runtime: string; gates: string[]; cmds: string[]; note
     gates: ["typecheck", "test", "build"],
     cmds: [
       "bun run dev        # Hono :8080 (--watch 리로드)",
-      "bun run build      # 단일 바이너리 app",
+      "BUN_COMPILE_TARGET=bun-linux-x64 bun run build  # 단일 바이너리 app(타깃은 Dockerfile이 TARGETARCH에서 주입 — 로컬은 x64/arm64 명시)",
       "bun run typecheck",
       "bun run test",
     ],
@@ -122,7 +122,7 @@ const DOC: Record<Arch, { runtime: string; gates: string[]; cmds: string[]; note
     gates: ["typecheck", "test", "build"],
     cmds: [
       "bun run dev        # 워커 루프 (--watch 리로드)",
-      "bun run build      # 단일 바이너리 app",
+      "BUN_COMPILE_TARGET=bun-linux-x64 bun run build  # 단일 바이너리 app(타깃은 Dockerfile이 TARGETARCH에서 주입 — 로컬은 x64/arm64 명시)",
       "bun run typecheck",
       "bun run test",
     ],
