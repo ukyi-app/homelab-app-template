@@ -220,6 +220,14 @@ jobs:
         working-directory: /tmp/app
         run: |
           test -f tsconfig.json || { echo "::error::tsconfig.json 누락(모든 아키타입 필수)"; exit 1; }
+          # build 스크립트의 --target은 이미지 빌드에선 Dockerfile이 TARGETARCH에서 주입한다(arm64 하드코딩
+          # 수리). 러너 직실행인 여기서는 러너 아치에서 파생한다 — site는 스크립트가 vite build뿐이라 변수를
+          # 읽지 않고, 미설정이면 compile 아키타입이 InvalidTarget으로 죽는다(실측 — PR #31 첫 실행).
+          case "$(uname -m)" in
+            aarch64) export BUN_COMPILE_TARGET=bun-linux-arm64 ;;
+            x86_64)  export BUN_COMPILE_TARGET=bun-linux-x64 ;;
+            *) echo "::error::지원하지 않는 러너 아치: $(uname -m)"; exit 1 ;;
+          esac
           bun run build
           bunx tsc --noEmit
       - name: 풀러-안전 가드 — db.ts가 statement_timeout을 startup 파라미터로 보내지 않음(api)
@@ -344,7 +352,7 @@ jobs:
           # Dockerfile 태그엔 digest(@sha256:...)가 붙을 수 있다(renovate pinDigests) — 태그 부분만 뽑는다.
           # .bun-version엔 digest가 붙지 않는다(renovate.json이 그 파일만 pinDigests=false로 뺀다 — 그쪽 주석 참조).
           pins=$(
-            { sed -nE 's|^FROM oven/bun:([^[:space:]@]+).*|\1|p' "${dfs[@]}"
+            { sed -nE 's|^FROM (--platform=[^[:space:]]+ )?oven/bun:([^[:space:]@]+).*|\2|p' "${dfs[@]}"
               sed -nE 's|^([0-9][^[:space:]#]*)$|\1|p' .bun-version
             }
           )
