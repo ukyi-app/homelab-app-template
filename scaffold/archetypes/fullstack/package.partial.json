@@ -4,7 +4,7 @@
     "dev:web": "vite",
     "dev:server": "bun --watch src/index.ts",
     "build:web": "vite build",
-    "build": "vite build && bun build --compile --target=bun-linux-arm64 src/index.ts --outfile app",
+    "build": "vite build && bun build --compile --target=$BUN_COMPILE_TARGET src/index.ts --outfile app",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

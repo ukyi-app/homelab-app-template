@@ -1,5 +1,5 @@
 # 템플릿 드리프트 가드 — 각 아키타입을 비대화형 스캐폴드 → 빌드/기동/계약 검증.
-# (matrix.archetype만 사용 — 신뢰 불가 입력 없음.)
+# (matrix.archetype·matrix.runner·matrix.platform만 사용 — 신뢰 불가 입력 없음.)
 #
 # ⚠️ 서드파티 액션은 커밋 SHA로 핀한다(homelab 규약) — 이 워크플로는 포크 PR에서도 돌아
 #    이동 태그(@v4)를 쓰면 태그 이동/탈취가 그대로 공급망 표면이 된다.
@@ -27,7 +27,7 @@ defaults:
     shell: bash
 jobs:
   scaffold-build:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     # ★행(hang)은 실패로 끝나야 한다 — 기본값 360분은 '실패'가 아니라 '방치'다. 워커의 import.meta.main
     #   가드가 빠지면 import만으로 루프가 돌아 `bun test`가 영영 끝나지 않는다(빌드는 결국 빨개지지만 그
     #   전에 6시간을 태운다). 여유는 크게 잡는다 — 현재 잡은 ~35s이고, 캐시 미스·GHCR 지연이 겹쳐도
@@ -37,6 +37,15 @@ jobs:
       fail-fast: false
       matrix:
         archetype: [fullstack, api, site, worker]
+        # 양 아치를 각각 **네이티브**로 빌드·기동한다(QEMU 없음 — bun test 에뮬레이션 플레이크 회피).
+        # amd64 leg는 클러스터(NUC)가 실제로 실행하는 아치다: arm64 단일 검증이 "amd64 leg에 aarch64
+        # 바이너리를 담은 이미지"(exec format error)를 통과시킨 병(2026-08-20 실측)의 재발 방지.
+        runner: [ubuntu-24.04-arm, ubuntu-24.04]
+        include:
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+          - runner: ubuntu-24.04
+            platform: linux/amd64
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -70,9 +79,10 @@ jobs:
           ARCHETYPE: ${{ matrix.archetype }}
       - name: docker build(frozen-lockfile — 첫 검증, lock 변형 前)
         # scaffold가 재생성한 lock을 이후 어떤 install/add가 '수리'해 stale을 가리기 前에 frozen 빌드로 검증.
-        run: docker build --platform linux/arm64 -t "ci-$ARCHETYPE" /tmp/app
+        run: docker build --platform "$PLATFORM" -t "ci-$ARCHETYPE" /tmp/app
         env:
           ARCHETYPE: ${{ matrix.archetype }}
+          PLATFORM: ${{ matrix.platform }}
       # --- 스모크 런: 빌드 통과 ≠ 기동 성공. 빌더/런타임 베이스의 glibc 갭, 엔트리포인트·경로·포트
       #     어긋남은 build만으로는 전부 초록이다. 아래 3스텝이 4개 아키타입을 실제로 기동해 런타임 계약을 건드린다.
       #     고정 sleep은 쓰지 않는다(러너 부하에 따라 흔들려 플레이크가 된다) — 상한을 둔 폴링만 쓰고,
@@ -210,6 +220,14 @@ jobs:
         working-directory: /tmp/app
         run: |
           test -f tsconfig.json || { echo "::error::tsconfig.json 누락(모든 아키타입 필수)"; exit 1; }
+          # build 스크립트의 --target은 이미지 빌드에선 Dockerfile이 TARGETARCH에서 주입한다(arm64 하드코딩
+          # 수리). 러너 직실행인 여기서는 러너 아치에서 파생한다 — site는 스크립트가 vite build뿐이라 변수를
+          # 읽지 않고, 미설정이면 compile 아키타입이 InvalidTarget으로 죽는다(실측 — PR #31 첫 실행).
+          case "$(uname -m)" in
+            aarch64) export BUN_COMPILE_TARGET=bun-linux-arm64 ;;
+            x86_64)  export BUN_COMPILE_TARGET=bun-linux-x64 ;;
+            *) echo "::error::지원하지 않는 러너 아치: $(uname -m)"; exit 1 ;;
+          esac
           bun run build
           bunx tsc --noEmit
       - name: 풀러-안전 가드 — db.ts가 statement_timeout을 startup 파라미터로 보내지 않음(api)
@@ -334,7 +352,7 @@ jobs:
           # Dockerfile 태그엔 digest(@sha256:...)가 붙을 수 있다(renovate pinDigests) — 태그 부분만 뽑는다.
           # .bun-version엔 digest가 붙지 않는다(renovate.json이 그 파일만 pinDigests=false로 뺀다 — 그쪽 주석 참조).
           pins=$(
-            { sed -nE 's|^FROM oven/bun:([^[:space:]@]+).*|\1|p' "${dfs[@]}"
+            { sed -nE 's|^FROM (--platform=[^[:space:]]+ )?oven/bun:([^[:space:]@]+).*|\2|p' "${dfs[@]}"
               sed -nE 's|^([0-9][^[:space:]#]*)$|\1|p' .bun-version
             }
           )
