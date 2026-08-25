@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 # ⚠️ BUILDPLATFORM 고정을 빼지 말 것. site 산출물(web/dist)은 정적 자산이라 아키텍처 중립이고,
 #   그래서 이 아키타입만 TARGETARCH 파라미터화가 없다(homelab doctor의 COMPILED_ARCHETYPES 밖 —
 #   크로스컴파일할 바이너리가 없으니 그 검사는 여기 해당하지 않는다). 바로 그 중립성이 이 줄의 근거다:
@@ -22,5 +22,5 @@ RUN bun run build
 
 # static-web-server(SWS) :2 = scratch 기반 기본 이미지. ENTRYPOINT는 sws 바이너리.
 # homelab 차트가 args(--port/--root /public/--page-fallback/--health) 주입. pod securityContext가 nonroot 강제.
-FROM ghcr.io/static-web-server/static-web-server:2
+FROM ghcr.io/static-web-server/static-web-server:2@sha256:2c1a7c3e0feaea5859307403b74e1c575f3ec1499094fc077344173d11abaae2
 COPY --from=build /app/web/dist /public
