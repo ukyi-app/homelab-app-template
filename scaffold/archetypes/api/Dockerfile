@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM oven/bun:1.3.14 AS build
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS build
 WORKDIR /app
 COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile

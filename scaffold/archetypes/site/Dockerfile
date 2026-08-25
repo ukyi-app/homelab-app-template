@@ -11,7 +11,7 @@
 #   ⚠️ template-ci는 이 고장을 원리적으로 못 잡는다 — 매트릭스가 양 아치를 각각 **네이티브** 러너에서
 #   빌드하기 때문이다(QEMU 없음). 이 줄이 지키는 것은 앱이 실제로 빌드되는 venue이지 이 레포의 CI가 아니다.
 #   cf. api·fullstack·worker도 같은 이유로 BUILDPLATFORM 고정이다(거긴 크로스컴파일이 덧붙는다).
-FROM --platform=$BUILDPLATFORM oven/bun:1.3.14 AS build
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS build
 WORKDIR /app
 COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile
