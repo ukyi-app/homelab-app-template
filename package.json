@@ -6,7 +6,7 @@
     "scaffold": "bun run scaffold/scaffold.ts"
   },
   "devDependencies": {
-    "@clack/prompts": "^1.7.0",
+    "@clack/prompts": "^1.8.1",
     "yaml": "^2.9.0",
     "typescript": "^7.0.2",
     "@types/bun": "^1.4.0"
