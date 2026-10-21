@@ -16,6 +16,8 @@ homelab에 배포하는 앱 저장소의 첫 내용이다. 새 앱은 `homelab a
 
 비밀은 파일(`.env` 등)로 만들지 않고 Infisical에서 환경변수로만 받는다. 개발용 값은 Infisical 프로젝트 `homelab-dev`에 있고 운영 값은 로컬에 오지 않는다.
 
+Bun은 `.bun-version`(Dockerfile 기반 이미지와 같은 버전)을 쓴다. `bun.lock`은 lockfile v2라 Bun 1.4.0 미만은 읽지 못하고 의존성을 다시 풀어 버린다. `bun --version`이 `.bun-version`과 같은지 먼저 본다(mise·setup-bun은 이 파일을 읽는다).
+
 ```bash
 infisical init                                           # 처음 한 번, 프로젝트 homelab-dev 선택(.infisical.json, 비밀 아님)
 bun install
@@ -23,6 +25,8 @@ infisical run --env=dev --path=/apps/<앱> -- bun run dev
 bun test
 infisical run --env=dev --path=/apps/<앱> -- docker compose up --build   # 이미지로 실행. 127.0.0.1:8080
 ```
+
+compose로 실행할 때 비밀은 `compose.yaml`의 `environment`에 이름만(값 없이) 적어야 컨테이너에 들어간다. `infisical run`은 compose 명령의 환경에만 값을 넣는다.
 
 ## 마이그레이션
 

@@ -12,8 +12,8 @@
       "versioning": "regex:^app-build-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
     },
     {
-      "description": "Dockerfile의 두 FROM과 @types/bun은 같은 bun 버전을 따라간다. 한 PR로 묶는다.",
-      "matchPackageNames": ["oven/bun", "@types/bun"],
+      "description": "Dockerfile의 두 FROM, .bun-version, @types/bun은 같은 bun 버전을 따라간다. 한 PR로 묶는다.",
+      "matchPackageNames": ["oven/bun", "bun", "@types/bun"],
       "groupName": "bun"
     }
   ]

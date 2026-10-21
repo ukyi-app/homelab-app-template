@@ -5,6 +5,8 @@ services:
     build: .
     read_only: true
     tmpfs: [/tmp]
+    # infisical run이 넣은 값은 compose CLI의 환경에만 있다. 컨테이너에 넘기려면 앱이 쓰는 이름을 값 없이 적는다.
+    # 예: MEMO_API_TOKEN: (값을 적지 않으면 compose를 실행한 셸의 같은 이름 변수를 넘긴다)
     environment:
       PORT: "8080"
     ports: ["127.0.0.1:8080:8080"]
