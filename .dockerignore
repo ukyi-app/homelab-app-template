@@ -1,8 +1,4 @@
 .git
 node_modules
-**/dist
-app
-.github
-*.md
 .env
 .env.*
