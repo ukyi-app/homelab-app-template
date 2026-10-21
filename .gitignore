@@ -1,9 +1,3 @@
 node_modules/
-.worktrees/
-dist/
-web/dist/
-app
-*.local
 .env
 .env.*
-!.env.example

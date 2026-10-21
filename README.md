@@ -1,29 +1,42 @@
-# homelab 앱 템플릿 (Bun + Hono + React)
+# 앱 템플릿
 
-대화형 스캐폴더로 즉시 배포 가능한 homelab 앱을 생성한다.
+homelab에 배포하는 앱 저장소의 첫 내용이다. 새 앱은 `homelab app new <앱>`이 이 템플릿으로 만든다(CLI가 생기기 전에는 `gh repo create ukyi-app/<앱> --public --template ukyi-app/homelab-app-template`).
+앱 이름 = 저장소 이름 = 이미지 이름(`ghcr.io/ukyi-app/<앱>`)이고, 53자 이하 DNS 라벨이다. 저장소는 public이어야 한다.
 
-## 시작
-1. 이 템플릿으로 레포 생성 (레포 이름 = 앱 이름, 소문자/숫자/하이픈, 2..40자)
-2. clone 후:
-   ```bash
-   bun install
-   bun run scaffold
-   ```
-3. 아키타입 선택 → 코드·`.app-config.yml` 자동 생성, 스캐폴더 자가삭제, `bun.lock` 재생성
-   - 🌐 **Full-stack** (Hono + React, 한 컨테이너)
-   - 🔌 **API** (Hono only)
-   - 📄 **Static site** (React SPA → static-web-server)
-   - ⚙️ **Worker** (백그라운드)
-4. `git add -A && git commit && git push` (재생성된 lock 포함)
-5. owner가 homelab에서 `create-app` 디스패치 → 첫 배포 🚀
+## 앱 계약
 
-## 런타임 계약
-- http `:8080` (web/site), metrics `:9090` (web · opt-in)
-- web: `/healthz`(liveness)·`/readyz`(readiness)
-- site: static-web-server `/health`
-- arm64 distroless non-root
+- **시험:** Dockerfile의 `test` 단계. CI(homelab 공통 `app-build`)가 `--target test`로 돌린다. 언어를 바꿔도 이 단계 이름은 둔다.
+- **이미지:** amd64 단일 빌드, 비root uid 65532. 루트 파일시스템은 읽기 전용이고 쓰기는 `/tmp`만 된다.
+- **포트·상태:** env `PORT`로 받은 포트에서 듣는다(1024 이상). `GET /healthz`가 준비되면 200을 돌려준다(기본 readiness probe).
+- **배포:** main에 병합하면 이미지를 GHCR에 올리고, homelab에 등록된 앱이면 배포 PR이 자동으로 열리고 병합된다. 배포 설정은 이 저장소가 아니라 homelab의 `apps/<앱>/`에 있다. 첫 등록은 사람 PR이다(`homelab app add <앱>`).
+- **CODEOWNERS·main 보호:** main은 PR과 code owner 리뷰로만 바뀐다. `.github/CODEOWNERS`는 `* @ukkiee` 한 줄만 둔다.
+- **공개 내용:** tailnet 이름(`*.ts.net`)과 Tailscale 주소를 코드·로그·이미지에 두지 않는다(CI가 막는다). 시크릿 값은 저장소에 두지 않는다.
 
-## 비밀 값
-코드에 절대 넣지 않는다. `.app-config.yml`엔 이름만 선언, 값은 SealedSecret로 봉인한다.
+## 로컬 개발
 
-> 비대화형(CI/스크립트): `bun run scaffold --archetype <fullstack|api|site|worker> --name <app> [--public] [--metrics] [--no-autodeploy] --yes`
+비밀은 파일(`.env` 등)로 만들지 않고 Infisical에서 환경변수로만 받는다. 개발용 값은 Infisical 프로젝트 `homelab-dev`에 있고 운영 값은 로컬에 오지 않는다.
+
+```bash
+infisical init                                           # 처음 한 번, 프로젝트 homelab-dev 선택(.infisical.json, 비밀 아님)
+bun install
+infisical run --env=dev --path=/apps/<앱> -- bun run dev
+bun test
+infisical run --env=dev --path=/apps/<앱> -- docker compose up --build   # 이미지로 실행. 127.0.0.1:8080
+```
+
+## 마이그레이션
+
+DB를 쓰면 homelab `apps/<앱>/values.yaml`에 명령을 적는다. 배포(Argo CD Sync)마다 hook Job으로 먼저 돈다.
+
+```yaml
+migration:
+  command: ["bun", "src/migrate.ts"]
+```
+
+- 멱등이어야 한다(매 Sync마다 다시 돈다).
+- 이전 버전과 호환되게 나눈다(expand/contract). 새 컬럼을 더하는 배포와 옛 컬럼을 지우는 배포를 따로 한다.
+- 앱은 시작할 때 스키마 버전만 확인하고 직접 마이그레이션하지 않는다.
+
+## 의존성 갱신
+
+Renovate가 PR을 연다(자동 병합 없음). `.github/workflows/build.yaml`의 `app-build-vX.Y.Z` 태그도 Renovate가 올린다. 태그 대신 SHA로 바꾸지 않는다(파일 주석).
